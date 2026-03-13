@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Creation Wizard - MovieAnimation.ai</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 50%, #0f1419 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+        
+        .wizard-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .wizard-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .wizard-header h1 {
+            font-size: 36px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .progress-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 40px;
+            position: relative;
+        }
+        
+        .progress-bar::before {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: rgba(255, 255, 255, 0.2);
+            z-index: 0;
+        }
+        
+        .progress-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .step-circle {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 8px;
+            transition: all 0.3s;
+        }
+        
+        .step-circle.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-color: #667eea;
+        }
+        
+        .step-circle.completed {
+            background: #4caf50;
+            border-color: #4caf50;
+        }
+        
+        .step-label {
+            font-size: 12px;
+            color: #b8b8b8;
+        }
+        
+        .wizard-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .step-content {
+            display: none;
+        }
+        
+        .step-content.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+        
+        input[type="text"],
+        input[type="file"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #ffffff;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+        
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 0.12);
+        }
+        
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        
+        .character-list {
+            margin-top: 20px;
+        }
+        
+        .character-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .btn {
+            flex: 1;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .btn-add {
+            background: #4caf50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        
+        .btn-remove {
+            background: #f44336;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .environment-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .environment-option {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .environment-option:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        
+        .environment-option.selected {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.2);
+        }
+        
+        .success-message {
+            text-align: center;
+            padding: 60px 20px;
+        }
+        
+        .success-message h2 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        
+        .success-message p {
+            font-size: 20px;
+            color: #b8b8b8;
+        }
+    </style>
+</head>
+<body>
+    <div class="wizard-container">
+        <div class="wizard-header">
+            <h1>🎬 Movie Creation Wizard</h1>
+            <p>Let's bring your story to life</p>
+        </div>
+        
+        <div class="progress-bar">
+            <div class="progress-step">
+                <div class="step-circle active" data-step="1">1</div>
+                <span class="step-label">Characters</span>
+            </div>
+            <div class="progress-step">
+                <div class="step-circle" data-step="2">2</div>
+                <span class="step-label">Scenes</span>
+            </div>
+            <div class="progress-step">
+                <div class="step-circle" data-step="3">3</div>
+                <span class="step-label">Animation</span>
+            </div>
+            <div class="progress-step">
+                <div class="step-circle" data-step="4">4</div>
+                <span class="step-label">Voice</span>
+            </div>
+            <div class="progress-step">
+                <div class="step-circle" data-step="5">5</div>
+                <span class="step-label">Render</span>
+            </div>
+        </div>
+        
+        <div class="wizard-card">
+            <!-- Step 1: Characters -->
+            <div class="step-content active" id="step1">
+                <h2>Step 1: Create Characters</h2>
+                <div class="form-group">
+                    <label for="characterName">Character Name</label>
+                    <input type="text" id="characterName" placeholder="Enter character name">
+                </div>
+                <div class="form-group">
+                    <label for="characterAvatar">Upload Avatar Image</label>
+                    <input type="file" id="characterAvatar" accept="image/*">
+                </div>
+                <div class="form-group">
+                    <label for="characterDescription">Character Description</label>
+                    <textarea id="characterDescription" placeholder="Describe your character's personality and appearance..."></textarea>
+                </div>
+                <button class="btn-add" onclick="addCharacter()">+ Add Character</button>
+                <div class="character-list" id="characterList"></div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="location.href='/'">Cancel</button>
+                    <button class="btn btn-primary" onclick="nextStep()">Next: Scenes</button>
+                </div>
+            </div>
+            
+            <!-- Step 2: Scenes -->
+            <div class="step-content" id="step2">
+                <h2>Step 2: Choose Environments</h2>
+                <p style="margin-bottom: 20px; color: #b8b8b8;">Select the environments for your movie scenes</p>
+                <div class="environment-grid">
+                    <div class="environment-option" onclick="selectEnvironment(this, 'forest')">
+                        <div style="font-size: 36px;">🌲</div>
+                        <div>Forest</div>
+                    </div>
+                    <div class="environment-option" onclick="selectEnvironment(this, 'city')">
+                        <div style="font-size: 36px;">🏙️</div>
+                        <div>City</div>
+                    </div>
+                    <div class="environment-option" onclick="selectEnvironment(this, 'beach')">
+                        <div style="font-size: 36px;">🏖️</div>
+                        <div>Beach</div>
+                    </div>
+                    <div class="environment-option" onclick="selectEnvironment(this, 'space')">
+                        <div style="font-size: 36px;">🚀</div>
+                        <div>Space</div>
+                    </div>
+                    <div class="environment-option" onclick="selectEnvironment(this, 'castle')">
+                        <div style="font-size: 36px;">🏰</div>
+                        <div>Castle</div>
+                    </div>
+                    <div class="environment-option" onclick="selectEnvironment(this, 'desert')">
+                        <div style="font-size: 36px;">🏜️</div>
+                        <div>Desert</div>
+                    </div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+                    <button class="btn btn-primary" onclick="nextStep()">Next: Animation</button>
+                </div>
+            </div>
+            
+            <!-- Step 3: Animation -->
+            <div class="step-content" id="step3">
+                <h2>Step 3: Animation Style</h2>
+                <div class="form-group">
+                    <label for="animationStyle">Animation Style</label>
+                    <select id="animationStyle">
+                        <option value="3d">3D Realistic</option>
+                        <option value="2d">2D Cartoon</option>
+                        <option value="anime">Anime</option>
+                        <option value="claymation">Claymation</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="frameRate">Frame Rate</label>
+                    <select id="frameRate">
+                        <option value="24">24 FPS (Cinematic)</option>
+                        <option value="30">30 FPS (Standard)</option>
+                        <option value="60">60 FPS (Smooth)</option>
+                    </select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+                    <button class="btn btn-primary" onclick="nextStep()">Next: Voice</button>
+                </div>
+            </div>
+            
+            <!-- Step 4: Voice -->
+            <div class="step-content" id="step4">
+                <h2>Step 4: Voice Configuration</h2>
+                <div class="form-group">
+                    <label for="voiceStyle">Voice Style</label>
+                    <select id="voiceStyle">
+                        <option value="male-professional">Male - Professional</option>
+                        <option value="female-professional">Female - Professional</option>
+                        <option value="male-friendly">Male - Friendly</option>
+                        <option value="female-friendly">Female - Friendly</option>
+                        <option value="child">Child Voice</option>
+                        <option value="elderly">Elderly Voice</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="accent">Accent</label>
+                    <select id="accent">
+                        <option value="american">American</option>
+                        <option value="british">British</option>
+                        <option value="australian">Australian</option>
+                        <option value="neutral">Neutral</option>
+                    </select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+                    <button class="btn btn-primary" onclick="nextStep()">Next: Render</button>
+                </div>
+            </div>
+            
+            <!-- Step 5: Render -->
+            <div class="step-content" id="step5">
+                <h2>Step 5: Rendering Options</h2>
+                <div class="form-group">
+                    <label for="resolution">Video Resolution</label>
+                    <select id="resolution">
+                        <option value="1080p">1080p HD</option>
+                        <option value="4k">4K Ultra HD</option>
+                        <option value="720p">720p</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="duration">Movie Duration (minutes)</label>
+                    <input type="text" id="duration" placeholder="e.g., 5">
+                </div>
+                <div class="form-group">
+                    <label for="movieTitle">Movie Title</label>
+                    <input type="text" id="movieTitle" placeholder="Give your movie a title">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" onclick="prevStep()">Back</button>
+                    <button class="btn btn-primary" onclick="completeWizard()">🎬 Generate Movie</button>
+                </div>
+            </div>
+            
+            <!-- Success -->
+            <div class="step-content" id="stepSuccess">
+                <div class="success-message">
+                    <h2>✨ Movie Configuration Complete!</h2>
+                    <p>Your movie settings have been saved. AI generation will begin shortly.</p>
+                    <button class="btn btn-primary" style="margin-top: 30px;" onclick="location.href='/'">Return Home</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentStep = 1;
+        let characters = [];
+        let selectedEnvironments = [];
+        
+        function nextStep() {
+            if (currentStep < 5) {
+                document.getElementById('step' + currentStep).classList.remove('active');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.add('completed');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.remove('active');
+                
+                currentStep++;
+                document.getElementById('step' + currentStep).classList.add('active');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.add('active');
+            }
+        }
+        
+        function prevStep() {
+            if (currentStep > 1) {
+                document.getElementById('step' + currentStep).classList.remove('active');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.remove('active');
+                
+                currentStep--;
+                document.getElementById('step' + currentStep).classList.add('active');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.add('active');
+                document.querySelector(`[data-step="${currentStep}"]`).classList.remove('completed');
+            }
+        }
+        
+        function addCharacter() {
+            const name = document.getElementById('characterName').value;
+            const description = document.getElementById('characterDescription').value;
+            
+            if (name) {
+                characters.push({ name, description });
+                updateCharacterList();
+                document.getElementById('characterName').value = '';
+                document.getElementById('characterDescription').value = '';
+            }
+        }
+        
+        function updateCharacterList() {
+            const list = document.getElementById('characterList');
+            list.innerHTML = characters.map((char, index) => `
+                <div class="character-item">
+                    <div>
+                        <strong>${char.name}</strong>
+                        <div style="font-size: 14px; color: #b8b8b8;">${char.description}</div>
+                    </div>
+                    <button class="btn-remove" onclick="removeCharacter(${index})">Remove</button>
+                </div>
+            `).join('');
+        }
+        
+        function removeCharacter(index) {
+            characters.splice(index, 1);
+            updateCharacterList();
+        }
+        
+        function selectEnvironment(element, env) {
+            element.classList.toggle('selected');
+            const index = selectedEnvironments.indexOf(env);
+            if (index > -1) {
+                selectedEnvironments.splice(index, 1);
+            } else {
+                selectedEnvironments.push(env);
+            }
+        }
+        
+        function completeWizard() {
+            const wizardData = {
+                characters: characters,
+                environments: selectedEnvironments,
+                animationStyle: document.getElementById('animationStyle').value,
+                frameRate: document.getElementById('frameRate').value,
+                voiceStyle: document.getElementById('voiceStyle').value,
+                accent: document.getElementById('accent').value,
+                resolution: document.getElementById('resolution').value,
+                duration: document.getElementById('duration').value,
+                title: document.getElementById('movieTitle').value
+            };
+            
+            // Send to server
+            fetch('/api/wizard/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(wizardData)
+            }).then(() => {
+                document.getElementById('step5').classList.remove('active');
+                document.getElementById('stepSuccess').classList.add('active');
+            });
+        }
+    </script>
+</body>
+</html>
