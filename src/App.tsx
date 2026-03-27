@@ -184,8 +184,8 @@ const ProcessFlow = () => {
   const steps = [
     { icon: BookOpen, title: "Upload Story" },
     { icon: FileText, title: "Convert Script" },
-    { icon: Users, title: "Extract Characters" },
     { icon: Clapperboard, title: "Break into Scenes" },
+    { icon: Users, title: "Extract Characters" },
     { icon: Play, title: "Generate Movie" }
   ];
 
