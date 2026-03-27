@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+map_api/run.sh
+map_api/venv/
+map_api/__pycache__/

@@ -1,15 +1,10 @@
- * Serving Flask app 'app'
- * Debug mode: off
-WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
- * Running on all addresses (0.0.0.0)
- * Running on http://127.0.0.1:8082
- * Running on http://172.24.75.40:8082
-Press CTRL+C to quit
-172.24.64.1 - - [11/Mar/2026 17:35:51] "GET / HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:35:51] "GET /favicon.ico HTTP/1.1" 404 -
-172.24.64.1 - - [11/Mar/2026 17:36:58] "GET / HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:37:28] "GET /wizard HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:39:32] "POST /api/wizard/complete HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:39:41] "GET / HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:41:10] "GET /wizard HTTP/1.1" 200 -
-172.24.64.1 - - [11/Mar/2026 17:42:24] "GET /wizard HTTP/1.1" 200 -
+
+> react-example@0.0.0 dev
+> vite --port=3000 --host=0.0.0.0 --port 8082 --host 0.0.0.0
+
+
+  VITE v6.4.1  ready in 220 ms
+
+  ➜  Local:   http://localhost:8082/
+  ➜  Network: http://10.255.255.254:8082/
+  ➜  Network: http://172.24.75.40:8082/
