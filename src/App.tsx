@@ -422,8 +422,8 @@ const ServiceWizard = ({ onComplete, initialProject }: { onComplete: (project: M
   const steps = [
     { id: 'A', title: 'Upload Story', icon: Upload, desc: 'Add or upload your written scripts and stories.' },
     { id: 'B', title: 'Convert to Script', icon: FileText, desc: 'Converting information into an editable script.' },
-    { id: 'C', title: 'Extract Characters', icon: Users, desc: 'Adding the characters that will be in the video.' },
-    { id: 'D', title: 'Break into Chapters', icon: BookOpen, desc: 'Break the story into different chapters.' },
+    { id: "C", title: "Break into Chapters", icon: BookOpen, desc: "Break the story into different chapters." },
+    { id: "D", title: "Extract Characters", icon: Users, desc: "Adding the characters that will be in the video." },
     { id: 'E', title: 'List Scenes', icon: Clapperboard, desc: 'Listing the scenes that are part of each chapter.' },
     { id: 'F', title: 'Generate Character Scripts', icon: Mic2, desc: 'Generation of character scripts for the movie.' },
   ];
