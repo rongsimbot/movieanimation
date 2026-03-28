@@ -163,9 +163,27 @@ const LoginModal = ({ onClose, onLogin }: { onClose: () => void, onLogin: () => 
 
 const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) => {
   const [anims, setAnims] = React.useState([]);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const itemsPerPage = 5;
+
   React.useEffect(() => {
     fetch('/api/animations').then(r => r.json()).then(d => { if (d.success) setAnims(d.animations); });
   }, []);
+
+  const filteredAnims = anims.filter((a: any) => 
+    a.animation_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    a.script_title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const totalPages = Math.ceil(filteredAnims.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedAnims = filteredAnims.slice(startIndex, startIndex + itemsPerPage);
+
+  React.useEffect(() => {
+    if (currentPage > totalPages && totalPages > 0) setCurrentPage(totalPages);
+  }, [filteredAnims, currentPage, totalPages]);
+
   return (
     <div className="min-h-screen pt-32 px-6 md:px-20">
       <div className="max-w-7xl mx-auto w-full">
@@ -178,33 +196,128 @@ const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) =
             <Plus className="w-5 h-5" /> Create New Movie
           </button>
         </div>
+        
+        <div className="mb-6">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search animations by name or script..."
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 pl-12 text-white placeholder-white/40 focus:outline-none focus:border-brand-primary/50 focus:ring-2 focus:ring-brand-primary/20 transition-all"
+            />
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            {searchQuery && (
+              <button
+                onClick={() => { setSearchQuery(''); setCurrentPage(1); }}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <p className="text-white/40 text-sm mt-2">
+            Showing {paginatedAnims.length} of {filteredAnims.length} {filteredAnims.length === 1 ? 'animation' : 'animations'}
+          </p>
+        </div>
+
         <div className="border-2 border-dashed border-white/10 rounded-3xl bg-black/40 p-6">
           {anims.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-white/30">
               <Clapperboard className="w-12 h-12 mb-4 opacity-50" />
               <p>You have not created any movies yet.</p>
             </div>
+          ) : filteredAnims.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-white/30">
+              <p>No animations found matching "{searchQuery}"</p>
+            </div>
           ) : (
-            <ul className="space-y-2">
-              {anims.map((a: any) => (
-                <li key={a.id} className="flex items-center justify-between p-3 bg-white/5 rounded hover:bg-white/10">
-                  <div>
-                    <p className="text-white font-medium">{a.animation_name}</p>
-                    <p className="text-white/50 text-sm">{a.script_title} • {a.status}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => window.location.href = `/workspace/animation/${a.id}`} className="p-2 hover:bg-white/10 rounded" title="Edit">
-                      <FileText className="w-4 h-4 text-white/60" />
-                    </button>
-                    <button onClick={() => window.location.href = `/player/animation/${a.id}`} className="p-2 hover:bg-brand-primary/20 rounded" title="Play">
-                      <Play className="w-4 h-4 text-white/60" />
-                    </button>
+            <ul className="space-y-3">
+              {paginatedAnims.map((a: any) => (
+                <li key={a.id} className="group relative bg-gradient-to-r from-white/5 to-white/10 hover:from-white/10 hover:to-white/15 rounded-xl p-4 border border-white/10 transition-all duration-300 hover:border-brand-primary/50 hover:shadow-lg hover:shadow-brand-primary/20">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-lg font-bold text-white mb-2 group-hover:text-brand-primary transition-colors">{a.animation_name}</h3>
+                      <p className="text-white/70 text-sm mb-3">{a.script_title}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          a.status === 'completed' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                          a.status === 'in_progress' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                        }`}>
+                          {a.status === 'in_progress' ? 'In Progress' : a.status.charAt(0).toUpperCase() + a.status.slice(1)}
+                        </span>
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                          ⏱️ {Math.floor(a.duration_seconds / 60)}:{(a.duration_seconds % 60).toString().padStart(2, '0')}
+                        </span>
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                          📚 {a.chapter_count} {parseInt(a.chapter_count) === 1 ? 'Chapter' : 'Chapters'}
+                        </span>
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-pink-500/20 text-pink-400 border border-pink-500/30">
+                          👥 {a.character_count} {parseInt(a.character_count) === 1 ? 'Character' : 'Characters'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 ml-6">
+                      <button 
+                        onClick={() => window.location.href = `/workspace/animation/${a.id}`} 
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-lg font-medium transition-all duration-300 shadow-lg hover:shadow-purple-500/50 hover:scale-105"
+                        title="Edit Animation"
+                      >
+                        <FileText className="w-4 h-4" />
+                        <span className="hidden md:inline">Edit</span>
+                      </button>
+                      <button 
+                        onClick={() => window.location.href = `/player/animation/${a.id}`} 
+                        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-brand-primary to-cyan-400 hover:from-cyan-400 hover:to-brand-primary text-black rounded-lg font-medium transition-all duration-300 shadow-lg hover:shadow-brand-primary/50 hover:scale-105"
+                        title="Play Animation"
+                      >
+                        <Play className="w-4 h-4" />
+                        <span className="hidden md:inline">Play</span>
+                      </button>
+                    </div>
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </div>
+
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-2 mt-6">
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-4 py-2 rounded-lg bg-white/5 text-white border border-white/10 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              ← Previous
+            </button>
+            <div className="flex gap-2">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                <button
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  className={`w-10 h-10 rounded-lg font-medium transition-all ${
+                    currentPage === page
+                      ? 'bg-brand-primary text-black'
+                      : 'bg-white/5 text-white border border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-4 py-2 rounded-lg bg-white/5 text-white border border-white/10 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
