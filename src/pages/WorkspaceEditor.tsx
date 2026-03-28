@@ -1,12 +1,21 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Play } from 'lucide-react';
+import { ArrowLeft, Save, Play, Upload, FileText, BookOpen, Users, Clapperboard, ChevronRight } from 'lucide-react';
 
 const WorkspaceEditor = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [animation, setAnimation] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
+  const [activeStep, setActiveStep] = React.useState(0);
+
+  const steps = [
+    { icon: Upload, title: 'Upload Story', key: 'story' },
+    { icon: FileText, title: 'Convert Script', key: 'script' },
+    { icon: BookOpen, title: 'Break into Scenes', key: 'scenes' },
+    { icon: Users, title: 'Extract Characters', key: 'characters' },
+    { icon: Clapperboard, title: 'Generate Movie', key: 'generate' }
+  ];
 
   React.useEffect(() => {
     fetch('/api/animations')
@@ -54,7 +63,53 @@ const WorkspaceEditor = () => {
 
         <div className="max-w-7xl mx-auto">
           <h1 className="text-3xl font-bold text-white mb-2">{animation.animation_name}</h1>
-          <p className="text-white/50 mb-8">{animation.script_title}</p>
+          <p className="text-white/50 mb-6">{animation.script_title}</p>
+
+          {/* Step Navigator */}
+          <div className="bg-black/40 border border-white/10 rounded-2xl p-6 mb-8">
+            <div className="flex items-center justify-between relative">
+              {steps.map((step, index) => {
+                const Icon = step.icon;
+                const isActive = index === activeStep;
+                const isCompleted = index < activeStep;
+                
+                return (
+                  <React.Fragment key={step.key}>
+                    <button
+                      onClick={() => setActiveStep(index)}
+                      className={`flex flex-col items-center gap-2 transition-all relative z-10 ${
+                        isActive ? 'scale-110' : 'scale-100 opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${
+                        isActive 
+                          ? 'bg-gradient-to-br from-brand-primary to-cyan-400 shadow-lg shadow-brand-primary/50' 
+                          : isCompleted
+                          ? 'bg-gradient-to-br from-green-500 to-emerald-400'
+                          : 'bg-white/10'
+                      }`}>
+                        <Icon className={`w-7 h-7 ${isActive || isCompleted ? 'text-black' : 'text-white'}`} />
+                      </div>
+                      <span className={`text-xs font-medium text-center max-w-[80px] ${
+                        isActive ? 'text-white' : 'text-white/50'
+                      }`}>
+                        {step.title}
+                      </span>
+                    </button>
+                    {index < steps.length - 1 && (
+                      <div className="flex-1 h-1 bg-white/10 mx-2 relative -top-7">
+                        <div 
+                          className={`h-full transition-all ${
+                            index < activeStep ? 'bg-gradient-to-r from-green-500 to-emerald-400' : 'bg-transparent'
+                          }`}
+                        />
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
 
           <div className="grid grid-cols-3 gap-6">
             <div className="col-span-2 space-y-4">

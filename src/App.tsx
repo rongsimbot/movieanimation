@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, Link } from 'react-router-dom';
 import VideoPlayer from './pages/VideoPlayer';
 import WorkspaceEditor from './pages/WorkspaceEditor';
 import { motion, AnimatePresence } from 'motion/react';
@@ -261,22 +261,22 @@ const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) =
                       </div>
                     </div>
                     <div className="flex gap-3 ml-6">
-                      <button 
-                        onClick={() => window.location.href = `/workspace/animation/${a.id}`} 
+                      <Link 
+                        to={`/animation/${a.id}`}
                         className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-lg font-medium transition-all duration-300 shadow-lg hover:shadow-purple-500/50 hover:scale-105"
                         title="Edit Animation"
                       >
                         <FileText className="w-4 h-4" />
                         <span className="hidden md:inline">Edit</span>
-                      </button>
-                      <button 
-                        onClick={() => window.location.href = `/player/animation/${a.id}`} 
+                      </Link>
+                      <Link 
+                        to={`/player/animation/${a.id}`}
                         className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-brand-primary to-cyan-400 hover:from-cyan-400 hover:to-brand-primary text-black rounded-lg font-medium transition-all duration-300 shadow-lg hover:shadow-brand-primary/50 hover:scale-105"
                         title="Play Animation"
                       >
                         <Play className="w-4 h-4" />
                         <span className="hidden md:inline">Play</span>
-                      </button>
+                      </Link>
                     </div>
                   </div>
                 </li>
@@ -859,7 +859,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/player/animation/:id" element={<VideoPlayer />} />
-        <Route path="/workspace/animation/:id" element={<WorkspaceEditor />} />
+        <Route path="/animation/:id" element={<WorkspaceEditor />} />
         <Route path="*" element={
           <div className="min-h-screen bg-black text-white selection:bg-brand-primary selection:text-black">
             <Navbar onStartWizard={() => setShowWizard(true)} onLoginClick={() => setShowLogin(true)} isLoggedIn={isLoggedIn} onLogout={() => { localStorage.removeItem('token'); setIsLoggedIn(false); window.location.href = '/'; }} />
