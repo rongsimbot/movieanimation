@@ -5,6 +5,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import VideoPlayer from './pages/VideoPlayer';
+import WorkspaceEditor from './pages/WorkspaceEditor';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, 
@@ -185,8 +187,19 @@ const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) =
           ) : (
             <ul className="space-y-2">
               {anims.map((a: any) => (
-                <li key={a.id} className="text-white p-3 bg-white/5 rounded hover:bg-white/10">
-                  {a.animation_name}
+                <li key={a.id} className="flex items-center justify-between p-3 bg-white/5 rounded hover:bg-white/10">
+                  <div>
+                    <p className="text-white font-medium">{a.animation_name}</p>
+                    <p className="text-white/50 text-sm">{a.script_title} • {a.status}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => window.location.href = `/workspace/animation/${a.id}`} className="p-2 hover:bg-white/10 rounded" title="Edit">
+                      <FileText className="w-4 h-4 text-white/60" />
+                    </button>
+                    <button onClick={() => window.location.href = `/player/animation/${a.id}`} className="p-2 hover:bg-brand-primary/20 rounded" title="Play">
+                      <Play className="w-4 h-4 text-white/60" />
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -730,11 +743,16 @@ export default function App() {
   const newReleases: SampleMovie[] = [...trendingMovies].reverse();
 
   return (
-    <div className="min-h-screen bg-black text-white selection:bg-brand-primary selection:text-black">
-      <Navbar onStartWizard={() => setShowWizard(true)} onLoginClick={() => setShowLogin(true)} isLoggedIn={isLoggedIn} onLogout={() => { localStorage.removeItem('token'); setIsLoggedIn(false); window.location.href = '/'; }} />
-      
-      <main>
-        {isLoggedIn ? (<AnimationsDashboard onStartWizard={() => setShowWizard(true)} />) : (<><Hero onStartWizard={() => setShowLogin(true)} />
+    <BrowserRouter>
+      <Routes>
+        <Route path="/player/animation/:id" element={<VideoPlayer />} />
+        <Route path="/workspace/animation/:id" element={<WorkspaceEditor />} />
+        <Route path="*" element={
+          <div className="min-h-screen bg-black text-white selection:bg-brand-primary selection:text-black">
+            <Navbar onStartWizard={() => setShowWizard(true)} onLoginClick={() => setShowLogin(true)} isLoggedIn={isLoggedIn} onLogout={() => { localStorage.removeItem('token'); setIsLoggedIn(false); window.location.href = '/'; }} />
+            
+            <main>
+              {isLoggedIn ? (<AnimationsDashboard onStartWizard={() => setShowWizard(true)} />) : (<><Hero onStartWizard={() => setShowLogin(true)} />
         
         <div className="relative z-10 -mt-32">
           {savedProjects.length > 0 && (
@@ -820,6 +838,9 @@ export default function App() {
           />
         )}
       </AnimatePresence>
-    </div>
+          </div>
+        } />
+      </Routes>
+    </BrowserRouter>
   );
 }
