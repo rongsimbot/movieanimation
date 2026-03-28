@@ -160,43 +160,102 @@ const LoginModal = ({ onClose, onLogin }: { onClose: () => void, onLogin: () => 
 };
 
 const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) => {
-  const [anims, setAnims] = React.useState([]);
+const AnimationsDashboard = ({ onStartWizard }: { onStartWizard: () => void }) => {
+  const [animations, setAnimations] = React.useState<any[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const navigate = useNavigate();
+
   React.useEffect(() => {
-    fetch('/api/animations').then(r => r.json()).then(d => { if (d.success) setAnims(d.animations); });
+    fetch('/api/animations')
+      .then(r => r.json())
+      .then(data => {
+        if (data.success) {
+          setAnimations(data.animations);
+        }
+      })
+      .finally(() => setLoading(false));
   }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen pt-32 px-6 flex items-center justify-center">
+        <p className="text-white/70">Loading animations...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen pt-32 px-6 md:px-20">
       <div className="max-w-7xl mx-auto w-full">
         <div className="flex items-center justify-between mb-12">
           <div className="text-left">
-            <h1 className="text-4xl font-bold mb-2">My Animations</h1>
+            <h1 className="text-4xl font-bold mb-2">My Animations ({animations.length})</h1>
             <p className="text-white/50">Manage your generated movies and scripts.</p>
           </div>
           <button onClick={onStartWizard} className="bg-brand-primary text-black px-6 py-3 rounded-xl font-bold flex items-center gap-2">
             <Plus className="w-5 h-5" /> Create New Movie
           </button>
         </div>
-        <div className="border-2 border-dashed border-white/10 rounded-3xl bg-black/40 p-6">
-          {anims.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-white/30">
-              <Clapperboard className="w-12 h-12 mb-4 opacity-50" />
-              <p>You have not created any movies yet.</p>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {anims.map((a: any) => (
-                <li key={a.id} className="text-white p-3 bg-white/5 rounded hover:bg-white/10">
-                  {a.animation_name}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        {animations.length === 0 ? (
+          <div className="h-64 border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center text-white/30 bg-black/40">
+            <Clapperboard className="w-12 h-12 mb-4 opacity-50" />
+            <p>No animations yet. Create your first one!</p>
+          </div>
+        ) : (
+          <div className="border border-white/10 rounded-2xl overflow-hidden bg-black/30">
+            <table className="w-full">
+              <thead className="bg-white/5 border-b border-white/10">
+                <tr className="text-left">
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70">Animation</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70">Script</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70 text-center">Chapters</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70 text-center">Characters</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70 text-center">Status</th>
+                  <th className="px-6 py-4 text-sm font-semibold text-white/70 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {animations.map((anim: any) => (
+                  <tr key={anim.id} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                    <td className="px-6 py-4 font-medium text-white">{anim.animation_name}</td>
+                    <td className="px-6 py-4 text-white/60 text-sm">{anim.script_title}</td>
+                    <td className="px-6 py-4 text-center text-white/60">{anim.chapter_count}</td>
+                    <td className="px-6 py-4 text-center text-white/60">{anim.character_count}</td>
+                    <td className="px-6 py-4 text-center">
+                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-medium ${
+                        anim.status === 'completed' ? 'bg-green-500/20 text-green-400 border border-green-500/30' :
+                        anim.status === 'in_progress' ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                        'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                      }`}>
+                        {anim.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        onClick={() => navigate(`/workspace/animation/${anim.id}`)}
+                        className="mr-2 p-2 hover:bg-white/10 rounded-lg transition-colors"
+                        title="Edit"
+                      >
+                        <FileText className="w-5 h-5 text-white/60 hover:text-brand-primary" />
+                      </button>
+                      <button 
+                        onClick={() => navigate(`/player/animation/${anim.id}`)}
+                        className="p-2 hover:bg-brand-primary/20 rounded-lg transition-colors"
+                        title="Play"
+                      >
+                        <Play className="w-5 h-5 text-white/60 hover:text-brand-primary" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
 };
-const ProcessFlow = () => {
   const steps = [
     { icon: BookOpen, title: "Upload Story" },
     { icon: FileText, title: "Convert Script" },

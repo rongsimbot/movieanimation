@@ -1,6 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify
 import os
 from werkzeug.utils import secure_filename
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
@@ -11,6 +13,21 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Store wizard data in memory (in production, use a database)
 wizard_data = {}
+
+# Database connection helper
+def get_db_connection():
+    """Connect to MovieAnimation PostgreSQL database
+    
+    When running on DESKTOP-EC24FP3: connects directly to localhost:5432
+    When running on loserver: use SSH port forwarding or API calls
+    """
+    return psycopg2.connect(
+        host='localhost',
+        port=5432,
+        database='movieanimation',
+        user='sim_admin',
+        password='SimData_Vector_2026!'
+    )
 
 @app.route('/')
 def index():
@@ -46,6 +63,40 @@ def complete_wizard():
     final_data = request.json
     # In production, save to database and trigger AI generation
     return jsonify({'success': True, 'message': 'Movie configuration saved!'})
+
+@app.route('/api/animations', methods=['GET'])
+def get_animations():
+    """Fetch all animations with aggregated data for dashboard"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        query = """
+        SELECT 
+            a.id,
+            a.animation_name,
+            s.script_title,
+            a.status,
+            a.duration_seconds,
+            a.last_modified,
+            a.file_path,
+            (SELECT COUNT(*) FROM chapters WHERE animation_id = a.id) as chapter_count,
+            (SELECT COUNT(*) FROM animation_characters WHERE animation_id = a.id) as character_count
+        FROM animations a
+        LEFT JOIN scripts s ON a.script_id = s.id
+        ORDER BY a.last_modified DESC
+        """
+        
+        cursor.execute(query)
+        animations = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'success': True, 'animations': animations})
+    
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8082, debug=False)
