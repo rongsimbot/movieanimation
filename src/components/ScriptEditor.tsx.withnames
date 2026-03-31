@@ -226,6 +226,27 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
             {element.type === 'dialogue' && (
               <div className={`flex ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'justify-end' : 'justify-start'} mb-3`}>
                 <div className="max-w-[70%]">
+                  {/*                   {/* Character Name */} */}
+                  {/*                   <div className={`text-xs font-bold text-white/60 mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}> */}
+                  {/*                     {editingId === element.id + '-char' ? ( */}
+                  {/*                       <input */}
+                  {/*                         type="text" */}
+                  {/*                         value={element.character} */}
+                  {/*                         onChange={(e) => handleEdit(element.id, 'character', e.target.value)} */}
+                  {/*                         onBlur={() => setEditingId(null)} */}
+                  {/*                         autoFocus */}
+                  {/*                         className="bg-transparent border-b border-brand-primary outline-none text-brand-primary" */}
+                  {/*                       /> */}
+                  {/*                     ) : ( */}
+                  {/*                       <span  */}
+                  {/*                         onClick={() => setEditingId(element.id + '-char')} */}
+                  {/*                         className="cursor-pointer hover:text-brand-primary transition-colors uppercase tracking-wider" */}
+                  {/*                       > */}
+                  {/*                         {element.character} */}
+                  {/*                       </span> */}
+                  {/*                     )} */}
+                  </div>
+
                   {/* Parenthetical (if exists) */}
                   {element.parenthetical && (
                     <div className={`text-xs text-white/40 italic mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
