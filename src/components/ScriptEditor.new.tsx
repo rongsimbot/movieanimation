@@ -223,54 +223,13 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
             )}
 
             {/* Dialogue - iMessage Style Bubbles */}
-            {element.type === 'dialogue' && (
-              <div className={`flex ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'justify-end' : 'justify-start'} mb-3`}>
+            {element.type === dialogue && (
+              <div className={`flex ${getCharacterSide(element.character || , characterSides) === right ? justify-end : justify-start} mb-3`}>
                 <div className="max-w-[70%]">
-                  {/* Character Name */}
-                  <div className={`text-xs font-bold text-white/60 mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
-                    {editingId === element.id + '-char' ? (
-                      <input
-                        type="text"
-                        value={element.character}
-                        onChange={(e) => handleEdit(element.id, 'character', e.target.value)}
-                        onBlur={() => setEditingId(null)}
-                        autoFocus
-                        className="bg-transparent border-b border-brand-primary outline-none text-brand-primary"
-                      />
-                    ) : (
-                      <span 
-                        onClick={() => setEditingId(element.id + '-char')}
-                        className="cursor-pointer hover:text-brand-primary transition-colors uppercase tracking-wider"
-                      >
-                        {element.character}
-                      </span>
-                    )}
+                  {/* Character Name - Simple Label */}
+                  <div className={`text-xs font-medium text-white/50 mb-1 ${getCharacterSide(element.character || , characterSides) === right ? text-right : text-left}`}>
+                    {element.character}
                   </div>
-
-                  {/* Parenthetical (if exists) */}
-                  {element.parenthetical && (
-                    <div className={`text-xs text-white/40 italic mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
-                      {editingId === element.id + '-paren' ? (
-                        <input
-                          type="text"
-                          value={element.parenthetical}
-                          onChange={(e) => handleEdit(element.id, 'parenthetical', e.target.value)}
-                          onBlur={() => setEditingId(null)}
-                          autoFocus
-                          className="bg-transparent border-b border-white/30 outline-none"
-                        />
-                      ) : (
-                        <span 
-                          onClick={() => setEditingId(element.id + '-paren')}
-                          className="cursor-pointer hover:text-white/60 transition-colors"
-                        >
-                          {element.parenthetical}
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Message Bubble (iPhone style with gradient) */}
                   <div 
                     className={`px-4 py-3 rounded-2xl ${
                       getCharacterSide(element.character || '', characterSides) === 'right' 
@@ -290,6 +249,8 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
                       />
                     ) : (
                       <div className="leading-relaxed">
+                        {element.text}
+                      </div>
                         {element.text}
                       </div>
                     )}
