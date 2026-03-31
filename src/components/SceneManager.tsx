@@ -403,13 +403,10 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
 
             {/* Script Items */}
             <div className="pt-3 border-t border-white/10">
-              <label className="text-xs text-white/50 flex items-center gap-1 mb-2">
-                <List className="w-3 h-3" />
-                Script Items in This Scene
-              </label>
-              <div className="bg-brand-primary/10 rounded-lg px-3 py-2 border border-brand-primary/20">
-                <span className="text-brand-primary font-mono text-sm">
-                  {formatRanges(scene.scriptItems)}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-white/50">Script Items:</span>
+                <span className="px-3 py-1 rounded-full text-xs font-medium bg-brand-primary/20 text-brand-primary border border-brand-primary/30">
+                  📝 {formatRanges(scene.scriptItems)}
                 </span>
               </div>
             </div>
