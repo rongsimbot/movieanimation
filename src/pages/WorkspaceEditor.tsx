@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, Play, Upload, FileText, BookOpen, Users, Clapperboard } from 'lucide-react';
 
 import { ScriptEditor } from '../components/ScriptEditor';
+import { SceneManager } from '../components/SceneManager';
 const WorkspaceEditor = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -197,7 +198,25 @@ const WorkspaceEditor = () => {
         return (
           <div className="bg-black/40 border border-white/10 rounded-xl p-6">
             <h2 className="text-xl font-bold text-white mb-4">Break into Scenes</h2>
-            <p className="text-white/50">Scene extraction coming soon...</p>
+            {scriptText ? (
+              <SceneManager 
+                script={scriptText} 
+                onUpdate={(scenes) => {
+                  console.log('Scenes updated:', scenes);
+                  // TODO: Save scenes to database
+                }}
+              />
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-white/50 mb-4">No script uploaded yet. Please upload a script in the Upload Story step first.</p>
+                <button 
+                  onClick={() => setActiveStep(0)}
+                  className="bg-brand-primary text-black px-6 py-3 rounded-lg font-semibold hover:bg-brand-primary/80"
+                >
+                  Go to Upload Story
+                </button>
+              </div>
+            )}
           </div>
         );
 
