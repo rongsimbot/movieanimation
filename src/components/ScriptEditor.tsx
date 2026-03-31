@@ -99,15 +99,16 @@ const getCharacterSide = (character: string, characterMap: Map<string, 'left' | 
 const getCharacterColor = (character: string, colorMap: Map<string, string>): string => {
   if (!colorMap.has(character)) {
     const colors = [
-      { bg: 'bg-blue-500', text: 'text-white' },
-      { bg: 'bg-gray-300', text: 'text-black' },
-      { bg: 'bg-green-500', text: 'text-white' },
-      { bg: 'bg-purple-500', text: 'text-white' },
-      { bg: 'bg-pink-400', text: 'text-white' },
-      { bg: 'bg-yellow-400', text: 'text-black' }
+      'bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/40',
+      'bg-gradient-to-br from-gray-200 to-gray-300 text-gray-900 shadow-lg shadow-gray-400/40',
+      'bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-lg shadow-green-500/40',
+      'bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/40',
+      'bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-500/40',
+      'bg-gradient-to-br from-orange-400 to-orange-500 text-white shadow-lg shadow-orange-400/40',
+      'bg-gradient-to-br from-cyan-400 to-cyan-500 text-white shadow-lg shadow-cyan-400/40',
+      'bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg shadow-indigo-500/40'
     ];
-    const color = colors[colorMap.size % colors.length];
-    colorMap.set(character, `${color.bg} ${color.text}`);
+    colorMap.set(character, colors[colorMap.size % colors.length]);
   }
   return colorMap.get(character)!;
 };
@@ -269,13 +270,13 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
                     </div>
                   )}
 
-                  {/* Message Bubble (iPhone style) */}
+                  {/* Message Bubble (iPhone style with gradient) */}
                   <div 
-                    className={`px-4 py-3 rounded-2xl shadow-lg ${
+                    className={`px-4 py-3 rounded-2xl ${
                       getCharacterSide(element.character || '', characterSides) === 'right' 
                         ? 'rounded-tr-sm' 
                         : 'rounded-tl-sm'
-                    } ${getCharacterColor(element.character || '', characterColors)} cursor-pointer hover:opacity-90 transition-opacity`}
+                    } ${getCharacterColor(element.character || '', characterColors)} cursor-pointer hover:scale-[1.02] transition-transform`}
                     onClick={() => setEditingId(element.id)}
                   >
                     {editingId === element.id ? (
