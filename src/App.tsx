@@ -849,7 +849,7 @@ export default function App() {
           <MovieSection title="New Releases" movies={newReleases} />
         </div>
 
-        <PricingSection />
+        {/* <PricingSection /> */}
         
         <div className="py-20 px-6 md:px-20 grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
           <div className="glass-card p-8 flex items-center gap-6">

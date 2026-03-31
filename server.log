@@ -1,7 +1,2 @@
-
-> react-example@0.0.0 preview
-> vite preview --port 8082 --host 0.0.0.0
-
-  ➜  Local:   http://localhost:8082/
-  ➜  Network: http://10.255.255.254:8082/
-  ➜  Network: http://172.24.75.40:8082/
+MovieAnimation API running on port 8084
+Frontend served via Vite on port 8082
