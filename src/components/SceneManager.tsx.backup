@@ -1,13 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { GripVertical, X, Plus, MapPin, Cloud, Users, Film, List } from 'lucide-react';
-
-interface ScriptItem {
-  id: number;
-  type: 'scene' | 'action' | 'dialogue';
-  character?: string;
-  text: string;
-  sceneId: string | null;
-}
+import React, { useState } from 'react';
+import { GripVertical, X, Plus, MapPin, Cloud, Users, Film } from 'lucide-react';
 
 interface Scene {
   id: string;
@@ -19,87 +11,29 @@ interface Scene {
   characters: string[];
   action: string;
   order: number;
-  scriptItems: number[]; // Array of script item IDs
 }
 
-const parseScriptItems = (scriptText: string): ScriptItem[] => {
-  const lines = scriptText.split('\n');
-  const items: ScriptItem[] = [];
-  let itemId = 1;
-  let currentSceneId: string | null = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    // Scene heading
-    if (/^(INT\.|EXT\.)/.test(line)) {
-      currentSceneId = Math.random().toString(36).substring(2);
-      items.push({
-        id: itemId++,
-        type: 'scene',
-        text: line,
-        sceneId: currentSceneId
-      });
-    }
-    // Character name
-    else if (line === line.toUpperCase() && /^[A-Z\s]+$/.test(line) && line.length > 1) {
-      items.push({
-        id: itemId++,
-        type: 'dialogue',
-        character: line,
-        text: '',
-        sceneId: currentSceneId
-      });
-    }
-    // Action or dialogue text
-    else if (!line.startsWith('(')) {
-      const lastItem = items[items.length - 1];
-      if (lastItem && lastItem.type === 'dialogue' && !lastItem.text) {
-        // Append to last dialogue
-        lastItem.text = line;
-      } else {
-        // Action line
-        items.push({
-          id: itemId++,
-          type: 'action',
-          text: line,
-          sceneId: currentSceneId
-        });
-      }
-    }
-  }
-
-  return items;
-};
-
-const parseScenes = (scriptText: string, scriptItems: ScriptItem[]): Scene[] => {
+const parseScenes = (scriptText: string): Scene[] => {
   const lines = scriptText.split('\n');
   const scenes: Scene[] = [];
   let currentScene: Partial<Scene> | null = null;
   let sceneOrder = 0;
-  let currentSceneId: string | null = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
 
+    // Detect scene heading
     if (/^(INT\.|EXT\.)/.test(line)) {
-      // Save previous scene
-      if (currentScene && currentScene.title && currentSceneId) {
-        const sceneItems = scriptItems
-          .filter(item => item.sceneId === currentSceneId)
-          .map(item => item.id);
-        
+      // Save previous scene if exists
+      if (currentScene && currentScene.title) {
         scenes.push({
           ...currentScene,
           order: sceneOrder++,
-          id: currentSceneId,
-          scriptItems: sceneItems
+          id: Math.random().toString(36).substring(2)
         } as Scene);
       }
 
-      // New scene
-      currentSceneId = scriptItems.find(item => item.text === line && item.type === 'scene')?.sceneId || Math.random().toString(36).substring(2);
+      // Parse new scene
       const match = line.match(/^(INT\.|EXT\.)\s+(.+?)\s+-\s+(DAY|NIGHT|DAWN|DUSK|MORNING|AFTERNOON|EVENING)/i);
       const location = match ? match[2] : line.replace(/^(INT\.|EXT\.)\s+/, '').split('-')[0].trim();
       const timeOfDay = (match ? match[3].toUpperCase() : 'DAY') as Scene['timeOfDay'];
@@ -111,15 +45,17 @@ const parseScenes = (scriptText: string, scriptItems: ScriptItem[]): Scene[] => 
         weather: 'CLEAR',
         environment: '',
         characters: [],
-        action: '',
-        scriptItems: []
+        action: ''
       };
     } else if (currentScene) {
+      // Collect action and characters
       if (line && line === line.toUpperCase() && /^[A-Z\s]+$/.test(line)) {
+        // Character name
         if (!currentScene.characters!.includes(line)) {
           currentScene.characters!.push(line);
         }
       } else if (line && !/^\(/.test(line)) {
+        // Action line
         currentScene.action = currentScene.action 
           ? currentScene.action + ' ' + line 
           : line;
@@ -128,72 +64,46 @@ const parseScenes = (scriptText: string, scriptItems: ScriptItem[]): Scene[] => 
   }
 
   // Save last scene
-  if (currentScene && currentScene.title && currentSceneId) {
-    const sceneItems = scriptItems
-      .filter(item => item.sceneId === currentSceneId)
-      .map(item => item.id);
-    
+  if (currentScene && currentScene.title) {
     scenes.push({
       ...currentScene,
       order: sceneOrder,
-      id: currentSceneId,
-      scriptItems: sceneItems
+      id: Math.random().toString(36).substring(2)
     } as Scene);
   }
 
   return scenes;
 };
 
-const formatRanges = (numbers: number[]): string => {
-  if (numbers.length === 0) return 'No items';
-  
-  const sorted = [...numbers].sort((a, b) => a - b);
-  const ranges: string[] = [];
-  let start = sorted[0];
-  let end = sorted[0];
-
-  for (let i = 1; i <= sorted.length; i++) {
-    if (i < sorted.length && sorted[i] === end + 1) {
-      end = sorted[i];
-    } else {
-      ranges.push(start === end ? `${start}` : `${start}-${end}`);
-      if (i < sorted.length) {
-        start = sorted[i];
-        end = sorted[i];
-      }
-    }
-  }
-
-  return ranges.join(', ');
-};
-
 const getTimeIcon = (time: string) => {
   const icons: Record<string, string> = {
-    DAY: '☀️', NIGHT: '🌙', DAWN: '🌅', DUSK: '🌆',
-    MORNING: '🌄', AFTERNOON: '☀️', EVENING: '🌇'
+    DAY: '☀️',
+    NIGHT: '🌙',
+    DAWN: '🌅',
+    DUSK: '🌆',
+    MORNING: '🌄',
+    AFTERNOON: '☀️',
+    EVENING: '🌇'
   };
   return icons[time] || '☀️';
 };
 
 const getWeatherIcon = (weather: string) => {
   const icons: Record<string, string> = {
-    CLEAR: '☀️', RAIN: '🌧️', SNOW: '❄️', WIND: '💨',
-    FOG: '🌫️', STORM: '⛈️', CLOUDY: '☁️'
+    CLEAR: '☀️',
+    RAIN: '🌧️',
+    SNOW: '❄️',
+    WIND: '💨',
+    FOG: '🌫️',
+    STORM: '⛈️',
+    CLOUDY: '☁️'
   };
   return icons[weather] || '☀️';
 };
 
 export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]) => void }> = ({ script, onUpdate }) => {
-  const [scriptItems, setScriptItems] = useState<ScriptItem[]>([]);
-  const [scenes, setScenes] = useState<Scene[]>([]);
+  const [scenes, setScenes] = useState<Scene[]>(() => parseScenes(script));
   const [editingId, setEditingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const items = parseScriptItems(script);
-    const parsedScenes = parseScenes(script, items);
-    setScriptItems(items);
-    setScenes(parsedScenes);
-  }, [script]);
 
   const updateScene = (id: string, field: keyof Scene, value: any) => {
     setScenes(prev => {
@@ -223,8 +133,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
       environment: '',
       characters: [],
       action: '',
-      order: scenes.length,
-      scriptItems: []
+      order: scenes.length
     };
     setScenes(prev => {
       const updated = [...prev, newScene];
@@ -236,7 +145,10 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
   const moveScene = (id: string, direction: 'up' | 'down') => {
     setScenes(prev => {
       const index = prev.findIndex(s => s.id === id);
-      if ((direction === 'up' && index === 0) || (direction === 'down' && index === prev.length - 1)) {
+      if (
+        (direction === 'up' && index === 0) || 
+        (direction === 'down' && index === prev.length - 1)
+      ) {
         return prev;
       }
 
@@ -244,6 +156,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
       const targetIndex = direction === 'up' ? index - 1 : index + 1;
       [newScenes[index], newScenes[targetIndex]] = [newScenes[targetIndex], newScenes[index]];
       
+      // Update order
       const reordered = newScenes.map((s, i) => ({ ...s, order: i }));
       onUpdate(reordered);
       return reordered;
@@ -259,7 +172,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
           </div>
           <div>
             <h3 className="text-xl font-bold">Scene Manager</h3>
-            <p className="text-xs text-white/50">{scenes.length} scenes • {scriptItems.length} script items</p>
+            <p className="text-xs text-white/50">{scenes.length} scenes • Edit locations, weather, and staging</p>
           </div>
         </div>
         <button 
@@ -315,6 +228,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
 
             {/* Fields Grid */}
             <div className="grid grid-cols-2 gap-3 mb-3">
+              {/* Location */}
               <div>
                 <label className="text-xs text-white/50 flex items-center gap-1 mb-1">
                   <MapPin className="w-3 h-3" />
@@ -329,6 +243,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
                 />
               </div>
 
+              {/* Time of Day */}
               <div>
                 <label className="text-xs text-white/50 flex items-center gap-1 mb-1">
                   {getTimeIcon(scene.timeOfDay)} Time of Day
@@ -348,6 +263,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
                 </select>
               </div>
 
+              {/* Weather */}
               <div>
                 <label className="text-xs text-white/50 flex items-center gap-1 mb-1">
                   <Cloud className="w-3 h-3" />
@@ -368,6 +284,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
                 </select>
               </div>
 
+              {/* Characters */}
               <div>
                 <label className="text-xs text-white/50 flex items-center gap-1 mb-1">
                   <Users className="w-3 h-3" />
@@ -383,6 +300,7 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
               </div>
             </div>
 
+            {/* Environment */}
             <div className="mb-3">
               <label className="text-xs text-white/50 mb-1 block">Environment / Background</label>
               <textarea
@@ -394,23 +312,11 @@ export const SceneManager: React.FC<{ script: string; onUpdate: (scenes: Scene[]
               />
             </div>
 
-            <div className="mb-3">
+            {/* Action Summary */}
+            <div>
               <label className="text-xs text-white/50 mb-1 block">Action Summary</label>
               <div className="bg-white/5 rounded-lg px-3 py-2 text-white/70 text-sm border border-white/5">
                 {scene.action || <span className="text-white/30 italic">No action captured</span>}
-              </div>
-            </div>
-
-            {/* Script Items */}
-            <div className="pt-3 border-t border-white/10">
-              <label className="text-xs text-white/50 flex items-center gap-1 mb-2">
-                <List className="w-3 h-3" />
-                Script Items in This Scene
-              </label>
-              <div className="bg-brand-primary/10 rounded-lg px-3 py-2 border border-brand-primary/20">
-                <span className="text-brand-primary font-mono text-sm">
-                  {formatRanges(scene.scriptItems)}
-                </span>
               </div>
             </div>
           </div>
