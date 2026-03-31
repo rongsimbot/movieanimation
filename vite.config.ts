@@ -22,7 +22,7 @@ export default defineConfig(({mode}) => {
           changeOrigin: true
         },
         "/api": {
-          target: "http://127.0.0.1:8086",
+          target: "http://127.0.0.1:8084",
           changeOrigin: true
         }
       },
