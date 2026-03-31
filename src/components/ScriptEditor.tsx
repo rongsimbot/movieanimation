@@ -28,7 +28,7 @@ const parseScript = (scriptText: string): ScriptElement[] => {
       elements.push({
         type: 'scene',
         text: line,
-        id: crypto.randomUUID()
+        id: Math.random().toString(36).substring(2)
       });
       i++;
       continue;
@@ -41,7 +41,7 @@ const parseScript = (scriptText: string): ScriptElement[] => {
       elements.push({
         type: 'action',
         text: line,
-        id: crypto.randomUUID()
+        id: Math.random().toString(36).substring(2)
       });
       i++;
       
@@ -73,7 +73,7 @@ const parseScript = (scriptText: string): ScriptElement[] => {
         character,
         parenthetical,
         text: dialogue,
-        id: crypto.randomUUID()
+        id: Math.random().toString(36).substring(2)
       });
       continue;
     }
@@ -82,7 +82,7 @@ const parseScript = (scriptText: string): ScriptElement[] => {
     elements.push({
       type: 'action',
       text: line,
-      id: crypto.randomUUID()
+      id: Math.random().toString(36).substring(2)
     });
     i++;
   }
@@ -280,3 +280,4 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
     </div>
   );
 };
+export default ScriptEditor;
