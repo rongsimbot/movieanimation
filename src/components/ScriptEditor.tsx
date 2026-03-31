@@ -33,49 +33,44 @@ const parseScript = (scriptText: string): ScriptElement[] => {
       continue;
     }
 
-    // Check for character name
-    const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : '';
-    if (nextLine && nextLine === nextLine.toUpperCase() && /^[A-Z\s]+$/.test(nextLine)) {
-      // Current line is action
-      elements.push({
-        type: 'action',
-        text: line,
-        id: Math.random().toString(36).substring(2)
-      });
-      i++;
-      
-      // Process character dialogue
-      const character = nextLine;
+    // Check if THIS line is a character name (ALL CAPS, standalone)
+    if (line === line.toUpperCase() && /^[A-Z\s]+$/.test(line) && line.length > 1) {
+      // This is a character name
+      const character = line;
       i++;
       
       let parenthetical = '';
       let dialogue = '';
       
+      // Check for parenthetical
       if (i < lines.length && lines[i].trim().startsWith('(')) {
         parenthetical = lines[i].trim();
         i++;
       }
       
+      // Collect dialogue lines
       while (i < lines.length) {
         const dialogueLine = lines[i].trim();
-        if (!dialogueLine || dialogueLine === dialogueLine.toUpperCase() || /^(INT\.|EXT\.)/.test(dialogueLine)) {
+        if (!dialogueLine || (dialogueLine === dialogueLine.toUpperCase() && /^[A-Z\s]+$/.test(dialogueLine)) || /^(INT\.|EXT\.)/.test(dialogueLine)) {
           break;
         }
         dialogue += (dialogue ? ' ' : '') + dialogueLine;
         i++;
       }
       
-      elements.push({
-        type: 'dialogue',
-        character,
-        parenthetical,
-        text: dialogue,
-        id: Math.random().toString(36).substring(2)
-      });
+      if (dialogue) {
+        elements.push({
+          type: 'dialogue',
+          character,
+          parenthetical,
+          text: dialogue,
+          id: Math.random().toString(36).substring(2)
+        });
+      }
       continue;
     }
 
-    // Default: action
+    // Default: action line
     elements.push({
       type: 'action',
       text: line,
@@ -89,7 +84,6 @@ const parseScript = (scriptText: string): ScriptElement[] => {
 
 const getCharacterSide = (character: string, characterMap: Map<string, 'left' | 'right'>): 'left' | 'right' => {
   if (!characterMap.has(character)) {
-    // Alternate sides
     const currentCount = characterMap.size;
     characterMap.set(character, currentCount % 2 === 0 ? 'left' : 'right');
   }
@@ -159,7 +153,7 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
           </div>
           <div>
             <h3 className="text-xl font-bold">Script Editor</h3>
-            <p className="text-xs text-white/50">Edit scene headings, actions, and dialogue (iMessage style)</p>
+            <p className="text-xs text-white/50">Edit scene headings, actions, and dialogue (iPhone style)</p>
           </div>
         </div>
         <button 
@@ -222,55 +216,23 @@ export const ScriptEditor: React.FC<{ script: string; onUpdate: (newScript: stri
               </div>
             )}
 
-            {/* Dialogue - iMessage Style Bubbles */}
+            {/* Dialogue - iPhone Style Message Bubbles */}
             {element.type === 'dialogue' && (
               <div className={`flex ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'justify-end' : 'justify-start'} mb-3`}>
                 <div className="max-w-[70%]">
-                  {/* Character Name */}
-                  <div className={`text-xs font-bold text-white/60 mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
-                    {editingId === element.id + '-char' ? (
-                      <input
-                        type="text"
-                        value={element.character}
-                        onChange={(e) => handleEdit(element.id, 'character', e.target.value)}
-                        onBlur={() => setEditingId(null)}
-                        autoFocus
-                        className="bg-transparent border-b border-brand-primary outline-none text-brand-primary"
-                      />
-                    ) : (
-                      <span 
-                        onClick={() => setEditingId(element.id + '-char')}
-                        className="cursor-pointer hover:text-brand-primary transition-colors uppercase tracking-wider"
-                      >
-                        {element.character}
-                      </span>
-                    )}
+                  {/* Character Name - Simple floating label */}
+                  <div className={`text-xs font-medium text-white/50 mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
+                    {element.character}
                   </div>
 
                   {/* Parenthetical (if exists) */}
                   {element.parenthetical && (
                     <div className={`text-xs text-white/40 italic mb-1 ${getCharacterSide(element.character || '', characterSides) === 'right' ? 'text-right' : 'text-left'}`}>
-                      {editingId === element.id + '-paren' ? (
-                        <input
-                          type="text"
-                          value={element.parenthetical}
-                          onChange={(e) => handleEdit(element.id, 'parenthetical', e.target.value)}
-                          onBlur={() => setEditingId(null)}
-                          autoFocus
-                          className="bg-transparent border-b border-white/30 outline-none"
-                        />
-                      ) : (
-                        <span 
-                          onClick={() => setEditingId(element.id + '-paren')}
-                          className="cursor-pointer hover:text-white/60 transition-colors"
-                        >
-                          {element.parenthetical}
-                        </span>
-                      )}
+                      {element.parenthetical}
                     </div>
                   )}
 
-                  {/* Message Bubble (iPhone style with gradient) */}
+                  {/* Message Bubble (iPhone style with vibrant gradient) */}
                   <div 
                     className={`px-4 py-3 rounded-2xl ${
                       getCharacterSide(element.character || '', characterSides) === 'right' 
