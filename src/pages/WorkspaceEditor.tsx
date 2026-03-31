@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, Play, Upload, FileText, BookOpen, Users, Clapperboard, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Save, Play, Upload, FileText, BookOpen, Users, Clapperboard } from 'lucide-react';
 
 const WorkspaceEditor = () => {
   const { id } = useParams();
@@ -8,26 +8,201 @@ const WorkspaceEditor = () => {
   const [animation, setAnimation] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [activeStep, setActiveStep] = React.useState(0);
+  const [scriptText, setScriptText] = React.useState('');
+  const [uploadFile, setUploadFile] = React.useState<File | null>(null);
+  const [uploading, setUploading] = React.useState(false);
+  const [status, setStatus] = React.useState('draft');
+  const [durationSeconds, setDurationSeconds] = React.useState(0);
+  const [saving, setSaving] = React.useState(false);
 
   const steps = [
-    { icon: Upload, title: 'Upload Story', key: 'story' },
-    { icon: FileText, title: 'Convert Script', key: 'script' },
+    { icon: Upload, title: 'Upload Story', key: 'upload' },
+    { icon: FileText, title: 'Convert Script', key: 'convert' },
     { icon: BookOpen, title: 'Break into Scenes', key: 'scenes' },
     { icon: Users, title: 'Extract Characters', key: 'characters' },
     { icon: Clapperboard, title: 'Generate Movie', key: 'generate' }
   ];
 
   React.useEffect(() => {
-    fetch('/api/animations')
+    fetch(`/api/animations/${id}`)
       .then(r => r.json())
       .then(data => {
-        if (data.success) {
-          const anim = data.animations.find((a: any) => a.id === parseInt(id || '0'));
+        if (data.success && data.animation) {
+          const anim = data.animation;
           setAnimation(anim);
+          setStatus(anim.status || 'draft');
+          setDurationSeconds(anim.duration_seconds || 0);
+          // Populate script text if it exists
+          setScriptText(anim.script_content || '');
         }
+      })
+      .catch(err => {
+        console.error('Failed to load animation:', err);
       })
       .finally(() => setLoading(false));
   }, [id]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // First, save the script text if it exists
+      if (scriptText && scriptText.trim()) {
+        const scriptResponse = await fetch(`/api/animation/${id}/upload-story`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script_text: scriptText })
+        });
+        const scriptResult = await scriptResponse.json();
+        if (!scriptResult.success) {
+          alert(`Error saving script: ${scriptResult.error}`);
+          setSaving(false);
+          return;
+        }
+      }
+
+      // Then save the animation metadata (status, duration)
+      const response = await fetch(`/api/animation/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          status, 
+          duration_seconds: parseFloat(durationSeconds) 
+        })
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert('All changes saved successfully!');
+        setAnimation(result.animation);
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (err) {
+      alert('Save failed: ' + err);
+    }
+    setSaving(false);
+  };
+
+  const handleUploadScript = async () => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      
+      if (uploadFile) {
+        formData.append('file', uploadFile);
+      } else if (scriptText) {
+        const response = await fetch(`/api/animation/${id}/upload-story`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script_text: scriptText })
+        });
+        const result = await response.json();
+        if (result.success) {
+          alert(`Script uploaded! ${result.characterCount} characters saved.`);
+          setScriptText('');
+        } else {
+          alert(`Error: ${result.error}`);
+        }
+        setUploading(false);
+        return;
+      }
+
+      const response = await fetch(`/api/animation/${id}/upload-story`, {
+        method: 'POST',
+        body: formData
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert(`Script uploaded! ${result.characterCount} characters saved.`);
+        setUploadFile(null);
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (err) {
+      alert('Upload failed: ' + err);
+    }
+    setUploading(false);
+  };
+
+  const renderStepContent = () => {
+    switch (activeStep) {
+      case 0: // Upload Story
+        return (
+          <div className="space-y-6">
+            <div className="bg-black/40 border border-white/10 rounded-xl p-6">
+              <h2 className="text-xl font-bold text-white mb-4">Upload Story</h2>
+              
+              {/* Text Input Option */}
+              <div className="mb-6">
+                <label className="text-white/70 text-sm mb-2 block">Paste Script Text</label>
+                <textarea 
+                  value={scriptText}
+                  onChange={(e) => setScriptText(e.target.value)}
+                  className="w-full h-64 bg-white/5 border border-white/10 rounded-lg p-4 text-white resize-none"
+                  placeholder="Paste your script here..."
+                />
+              </div>
+
+              {/* File Upload Option */}
+              <div className="mb-6">
+                <label className="text-white/70 text-sm mb-2 block">Or Upload File (PDF, Word, Text)</label>
+                <input 
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg p-3 text-white"
+                />
+                {uploadFile && (
+                  <p className="text-green-400 text-sm mt-2">Selected: {uploadFile.name}</p>
+                )}
+              </div>
+
+              <button 
+                onClick={handleUploadScript}
+                disabled={uploading || (!scriptText && !uploadFile)}
+                className="bg-brand-primary text-black px-6 py-3 rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-brand-primary/80"
+              >
+                {uploading ? 'Uploading...' : 'Upload Script'}
+              </button>
+            </div>
+          </div>
+        );
+
+      case 1: // Convert Script
+        return (
+          <div className="bg-black/40 border border-white/10 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">Convert Script</h2>
+            <p className="text-white/50">Script conversion tools coming soon...</p>
+          </div>
+        );
+
+      case 2: // Break into Scenes
+        return (
+          <div className="bg-black/40 border border-white/10 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">Break into Scenes</h2>
+            <p className="text-white/50">Scene extraction coming soon...</p>
+          </div>
+        );
+
+      case 3: // Extract Characters
+        return (
+          <div className="bg-black/40 border border-white/10 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">Extract Characters</h2>
+            <p className="text-white/50">Character extraction coming soon...</p>
+          </div>
+        );
+
+      case 4: // Generate Movie
+        return (
+          <div className="bg-black/40 border border-white/10 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">Generate Movie</h2>
+            <p className="text-white/50">Movie generation pipeline coming soon...</p>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
 
   if (loading) return (
     <div className="min-h-screen bg-black flex items-center justify-center">
@@ -50,9 +225,13 @@ const WorkspaceEditor = () => {
             Back to Animations
           </button>
           <div className="flex gap-2">
-            <button className="bg-white/10 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-white/20">
+            <button 
+              onClick={handleSave}
+              disabled={saving}
+              className="bg-white/10 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-white/20 disabled:opacity-50"
+            >
               <Save className="w-4 h-4" />
-              Save
+              {saving ? 'Saving...' : 'Save'}
             </button>
             <button onClick={() => navigate(`/player/animation/${id}`)} className="bg-brand-primary text-black px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-brand-primary/80">
               <Play className="w-4 h-4" />
@@ -65,66 +244,39 @@ const WorkspaceEditor = () => {
           <h1 className="text-3xl font-bold text-white mb-2">{animation.animation_name}</h1>
           <p className="text-white/50 mb-6">{animation.script_title}</p>
 
-          {/* Step Navigator */}
+          {/* Tab Navigation - Only One Active at a Time */}
           <div className="bg-black/40 border border-white/10 rounded-2xl p-6 mb-8">
-            <div className="flex items-center justify-between relative">
+            <div className="flex gap-4">
               {steps.map((step, index) => {
                 const Icon = step.icon;
                 const isActive = index === activeStep;
-                const isCompleted = index < activeStep;
                 
                 return (
-                  <React.Fragment key={step.key}>
-                    <button
-                      onClick={() => setActiveStep(index)}
-                      className={`flex flex-col items-center gap-2 transition-all relative z-10 ${
-                        isActive ? 'scale-110' : 'scale-100 opacity-60 hover:opacity-100'
-                      }`}
-                    >
-                      <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all ${
-                        isActive 
-                          ? 'bg-gradient-to-br from-brand-primary to-cyan-400 shadow-lg shadow-brand-primary/50' 
-                          : isCompleted
-                          ? 'bg-gradient-to-br from-green-500 to-emerald-400'
-                          : 'bg-white/10'
-                      }`}>
-                        <Icon className={`w-7 h-7 ${isActive || isCompleted ? 'text-black' : 'text-white'}`} />
-                      </div>
-                      <span className={`text-xs font-medium text-center max-w-[80px] ${
-                        isActive ? 'text-white' : 'text-white/50'
-                      }`}>
-                        {step.title}
-                      </span>
-                    </button>
-                    {index < steps.length - 1 && (
-                      <div className="flex-1 h-1 bg-white/10 mx-2 relative -top-7">
-                        <div 
-                          className={`h-full transition-all ${
-                            index < activeStep ? 'bg-gradient-to-r from-green-500 to-emerald-400' : 'bg-transparent'
-                          }`}
-                        />
-                      </div>
-                    )}
-                  </React.Fragment>
+                  <button
+                    key={step.key}
+                    onClick={() => setActiveStep(index)}
+                    className={`flex flex-col items-center gap-2 px-6 py-4 rounded-xl transition-all ${
+                      isActive 
+                        ? 'bg-gradient-to-br from-brand-primary to-cyan-400 shadow-lg shadow-brand-primary/50 scale-105' 
+                        : 'bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    <Icon className={`w-6 h-6 ${isActive ? 'text-black' : 'text-white/70'}`} />
+                    <span className={`text-sm font-medium whitespace-nowrap ${
+                      isActive ? 'text-black' : 'text-white/70'
+                    }`}>
+                      {step.title}
+                    </span>
+                  </button>
                 );
               })}
             </div>
           </div>
 
+          {/* Dynamic Content Area */}
           <div className="grid grid-cols-3 gap-6">
-            <div className="col-span-2 space-y-4">
-              <div className="bg-black/40 border border-white/10 rounded-xl p-6">
-                <h2 className="text-xl font-bold text-white mb-4">Script</h2>
-                <textarea 
-                  className="w-full h-64 bg-white/5 border border-white/10 rounded-lg p-4 text-white resize-none"
-                  placeholder="Enter your script here..."
-                />
-              </div>
-
-              <div className="bg-black/40 border border-white/10 rounded-xl p-6">
-                <h2 className="text-xl font-bold text-white mb-4">Chapters</h2>
-                <p className="text-white/50">Chapter editing coming soon...</p>
-              </div>
+            <div className="col-span-2">
+              {renderStepContent()}
             </div>
 
             <div className="space-y-4">
@@ -133,7 +285,11 @@ const WorkspaceEditor = () => {
                 <div className="space-y-3">
                   <div>
                     <label className="text-white/50 text-sm">Status</label>
-                    <select className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-white mt-1">
+                    <select 
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-white mt-1"
+                    >
                       <option value="draft">Draft</option>
                       <option value="in_progress">In Progress</option>
                       <option value="completed">Completed</option>
@@ -143,8 +299,9 @@ const WorkspaceEditor = () => {
                     <label className="text-white/50 text-sm">Duration (seconds)</label>
                     <input 
                       type="number" 
+                      value={durationSeconds}
+                      onChange={(e) => setDurationSeconds(e.target.value)}
                       className="w-full bg-white/5 border border-white/10 rounded-lg p-2 text-white mt-1"
-                      defaultValue={animation.duration_seconds}
                     />
                   </div>
                 </div>

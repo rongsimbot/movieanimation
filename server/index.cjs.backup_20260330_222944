@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const path = require("path");
 const multer = require("multer");
-const { PDFParse } = require("pdf-parse");
+const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const fs = require("fs").promises;
 
@@ -92,14 +92,18 @@ app.post("/api/animation/:id/upload-story", upload.single("file"), async (req, r
     let scriptText = "";
     let filename = null;
 
-    // Check if file was uploaded first (has priority)
-    if (req.file) {
+    // Check if text was provided directly
+    if (req.body.script_text) {
+      scriptText = req.body.script_text;
+    }
+    // Check if file was uploaded
+    else if (req.file) {
       filename = req.file.originalname;
       const fileBuffer = await fs.readFile(req.file.path);
       
       // Parse based on file type
       if (req.file.mimetype === "application/pdf") {
-        const pdfData = await PDFParse(fileBuffer);
+        const pdfData = await pdfParse(fileBuffer);
         scriptText = pdfData.text;
       } else if (req.file.mimetype.includes("word") || req.file.originalname.endsWith(".docx")) {
         const result = await mammoth.extractRawText({ buffer: fileBuffer });
@@ -113,10 +117,6 @@ app.post("/api/animation/:id/upload-story", upload.single("file"), async (req, r
       
       // Clean up temp file
       await fs.unlink(req.file.path);
-    }
-    // Check if text was provided directly
-    else if (req.body.script_text && req.body.script_text.trim()) {
-      scriptText = req.body.script_text;
     } else {
       return res.status(400).json({ success: false, error: "No script text or file provided" });
     }
@@ -129,38 +129,28 @@ app.post("/api/animation/:id/upload-story", upload.single("file"), async (req, r
       ALTER TABLE scripts ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP DEFAULT NOW();
     `);
 
-    // Update or insert script and link to animation
+    // Update or insert script
     const existingScript = await pool.query(
       "SELECT id FROM scripts WHERE animation_id = $1",
       [id]
     );
 
-    let scriptId;
     if (existingScript.rows.length > 0) {
-      const updateResult = await pool.query(
-        "UPDATE scripts SET original_text = $1, script_content = $1, source_filename = $2, uploaded_at = NOW() WHERE animation_id = $3 RETURNING id",
+      await pool.query(
+        "UPDATE scripts SET original_text = $1, script_content = $1, source_filename = $2, uploaded_at = NOW() WHERE animation_id = $3",
         [scriptText, filename, id]
       );
-      scriptId = updateResult.rows[0].id;
     } else {
-      const insertResult = await pool.query(
-        "INSERT INTO scripts (animation_id, original_text, script_content, source_filename, uploaded_at, script_title) VALUES ($1, $2, $2, $3, NOW(), $4) RETURNING id",
+      await pool.query(
+        "INSERT INTO scripts (animation_id, original_text, script_content, source_filename, uploaded_at, script_title) VALUES ($1, $2, $2, $3, NOW(), $4)",
         [id, scriptText, filename, filename || 'Untitled Script']
       );
-      scriptId = insertResult.rows[0].id;
     }
-
-    // Update animation to link to this script
-    await pool.query(
-      "UPDATE animations SET script_id = $1, last_modified = NOW() WHERE id = $2",
-      [scriptId, id]
-    );
 
     res.json({ 
       success: true, 
       message: "Script uploaded successfully",
-      characterCount: scriptText.length,
-      scriptId: scriptId
+      characterCount: scriptText.length
     });
   } catch (err) {
     console.error("Error uploading script:", err);
