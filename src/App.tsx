@@ -509,6 +509,22 @@ export default function App() {
         <Hero onStartWizard={() => setShowWizard(true)} />
         
         <div className="relative z-10 -mt-32">
+          {/* LatentSync Test Video Section */}
+          <section className="py-12 px-6 md:px-20 mb-12">
+            <h2 className="text-2xl font-bold mb-8">Latest AI Test: LatentSync Lip-Sync</h2>
+            <div className="w-full max-w-4xl mx-auto bg-black rounded-xl overflow-hidden shadow-2xl border border-zinc-800">
+              <video 
+                controls 
+                className="w-full h-auto"
+                preload="metadata"
+                poster="/animations/sarah_ben_latentsync_test.mp4#t=0.1"
+              >
+                <source src="/animations/sarah_ben_latentsync_test.mp4" type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          </section>
+
           {savedProjects.length > 0 && (
             <section className="py-12 px-6 md:px-20">
               <h2 className="text-2xl font-bold mb-8">My Projects</h2>
