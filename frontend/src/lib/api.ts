@@ -190,4 +190,248 @@ export function isAuthenticated(): boolean {
   return !!getStoredToken();
 }
 
+// ─── Phase 3: Script Endpoints ──────────────────────────────────
+
+export interface Script {
+  id: number;
+  script_title: string;
+  script_content: string;
+  version: string;
+  author: string | null;
+  genre: string | null;
+  word_count: number | null;
+  status: 'draft' | 'review' | 'approved' | 'archived';
+  created_at: string;
+  last_modified: string;
+  animation_id: number | null;
+}
+
+export interface ScriptParseResult {
+  message: string;
+  usedAI: boolean;
+  animationId: number;
+  script: Script;
+  characters: Array<{
+    id: number;
+    character_name: string;
+    character_type: string;
+    description: string;
+  }>;
+  scenesCount: number;
+  chaptersCount: number;
+}
+
+export interface ScriptBreakdown {
+  script: Script;
+  parsed: boolean;
+  animationId?: number;
+  chapters: Array<{
+    id: number;
+    chapter_number: number;
+    chapter_title: string;
+    content_summary: string;
+  }>;
+  scenes: Array<{
+    id: number;
+    chapter_id: number;
+    scene_number: number;
+    scene_title: string;
+    description: string;
+    duration_seconds: number;
+    location: string;
+  }>;
+  characters: Array<{
+    id: number;
+    character_name: string;
+    character_type: string;
+    description: string;
+    image_url: string | null;
+  }>;
+}
+
+export async function createScript(data: {
+  script_title: string;
+  script_content: string;
+  genre?: string;
+  source_filename?: string;
+}) {
+  return apiRequest<{ message: string; script: Script }>('/scripts', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listScripts(params?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.offset) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiRequest<{ scripts: Script[]; total: number }>(`/scripts${qs ? '?' + qs : ''}`);
+}
+
+export async function getScript(id: number) {
+  return apiRequest<{ script: Script }>(`/scripts/${id}`);
+}
+
+export async function updateScript(id: number, data: {
+  script_title?: string;
+  script_content?: string;
+  genre?: string;
+  status?: string;
+}) {
+  return apiRequest<{ message: string; script: Script }>(`/scripts/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteScript(id: number) {
+  return apiRequest<{ message: string }>(`/scripts/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function parseScript(id: number) {
+  return apiRequest<ScriptParseResult>(`/scripts/${id}/parse`, {
+    method: 'POST',
+  });
+}
+
+export async function getScriptBreakdown(id: number) {
+  return apiRequest<ScriptBreakdown>(`/scripts/${id}/breakdown`);
+}
+
+// ─── Phase 3: Character Endpoints ───────────────────────────────
+
+export interface Character {
+  id: number;
+  character_name: string;
+  character_type: string | null;
+  description: string | null;
+  appearance_notes: string | null;
+  voice_notes: string | null;
+  image_url: string | null;
+  created_at: string;
+  last_modified: string;
+}
+
+export async function listCharacters(search?: string) {
+  const query = search ? `?search=${encodeURIComponent(search)}` : '';
+  return apiRequest<{ characters: Character[] }>(`/characters${query}`);
+}
+
+export async function getCharacter(id: number) {
+  return apiRequest<{ character: Character }>(`/characters/${id}`);
+}
+
+export async function updateCharacter(id: number, data: {
+  character_name?: string;
+  character_type?: string;
+  description?: string;
+  appearance_notes?: string;
+  image_url?: string;
+}) {
+  return apiRequest<{ message: string; character: Character }>(`/characters/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function assignImageToCharacter(characterId: number, assetId: number) {
+  return apiRequest<{ message: string; character: Character }>(`/characters/${characterId}/assign-image`, {
+    method: 'POST',
+    body: JSON.stringify({ asset_id: assetId }),
+  });
+}
+
+// ─── Phase 3: Asset Endpoints ───────────────────────────────────
+
+export interface Asset {
+  id: number;
+  file_name: string;
+  file_path: string;
+  file_size: number | null;
+  mime_type: string | null;
+  asset_type: string;
+  character_id: number | null;
+  created_at: string;
+  url: string;
+  fileSizeFormatted: string;
+}
+
+export interface AssetStats {
+  totalAssets: number;
+  totalSize: number;
+  characterPhotos: number;
+  props: number;
+  backgrounds: number;
+}
+
+export async function uploadAssets(formData: FormData) {
+  const token = getStoredToken();
+  const url = `${API_BASE_URL}/assets/upload`;
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    const data = await response.json();
+    return {
+      ok: response.ok,
+      status: response.status,
+      data,
+      error: !response.ok ? data?.error : undefined,
+    };
+  } catch (err: any) {
+    return { ok: false, status: 0, error: err.message };
+  }
+}
+
+export async function uploadAssetBase64(data: {
+  file_name: string;
+  file_data: string;
+  mime_type?: string;
+  asset_type?: string;
+  character_id?: number;
+}) {
+  return apiRequest<{ message: string; asset: Asset }>('/assets/upload-base64', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listAssets(params?: {
+  asset_type?: string;
+  character_id?: number;
+  limit?: number;
+  offset?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.asset_type) query.set('asset_type', params.asset_type);
+  if (params?.character_id) query.set('character_id', String(params.character_id));
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.offset) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiRequest<{ assets: Asset[]; stats: AssetStats }>(`/assets${qs ? '?' + qs : ''}`);
+}
+
+export async function deleteAsset(id: number) {
+  return apiRequest<{ message: string }>(`/assets/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export function getAssetUrl(assetId: number): string {
+  return `${API_BASE_URL}/assets/${assetId}/file`;
+}
+
 export { API_BASE_URL };

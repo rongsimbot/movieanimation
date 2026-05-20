@@ -10,6 +10,9 @@ import cors from 'cors';
 import videoRoutes from './routes/videoRoutes';
 import authRoutes from './routes/authRoutes';
 import userRoutes from './routes/userRoutes';
+import scriptRoutes from './routes/scriptRoutes';
+import characterRoutes from './routes/characterRoutes';
+import assetRoutes from './routes/assetRoutes';
 import { testConnection, closePool } from './config/database';
 import { closeQueues } from './queue/videoQueue';
 
@@ -35,6 +38,9 @@ if (process.env.NODE_ENV === 'development') {
 app.use('/api/videos', videoRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/scripts', scriptRoutes);
+app.use('/api/characters', characterRoutes);
+app.use('/api/assets', assetRoutes);
 
 // Health check (auth-ready)
 app.get('/api/health', async (_req, res) => {
@@ -58,6 +64,11 @@ app.get('/api/health', async (_req, res) => {
       'batch-generation-queue',
       'real-time-progress-tracking',
       'cost-tracking',
+      'script-crud',              // 🆕 Phase 3
+      'ai-script-parsing',        // 🆕 Phase 3
+      'character-management',     // 🆕 Phase 3
+      'asset-upload',             // 🆕 Phase 3
+      'asset-library',            // 🆕 Phase 3
     ],
     database: dbConnected ? 'connected' : 'disconnected',
     apis: ['sora', 'runway', 'seedance', 'luma'],
@@ -72,6 +83,33 @@ app.get('/api/health', async (_req, res) => {
     userEndpoints: [
       'GET  /api/users/profile',
       'GET  /api/users/dashboard',
+    ],
+    scriptEndpoints: [
+      'POST   /api/scripts',
+      'GET    /api/scripts',
+      'GET    /api/scripts/:id',
+      'PUT    /api/scripts/:id',
+      'DELETE /api/scripts/:id',
+      'POST   /api/scripts/:id/parse',
+      'GET    /api/scripts/:id/breakdown',
+    ],
+    characterEndpoints: [
+      'POST   /api/characters',
+      'GET    /api/characters',
+      'GET    /api/characters/:id',
+      'PUT    /api/characters/:id',
+      'DELETE /api/characters/:id',
+      'POST   /api/characters/:id/assign-image',
+    ],
+    assetEndpoints: [
+      'POST   /api/assets/upload',
+      'POST   /api/assets/upload-base64',
+      'GET    /api/assets',
+      'GET    /api/assets/stats',
+      'GET    /api/assets/:id',
+      'GET    /api/assets/:id/file',
+      'PUT    /api/assets/:id',
+      'DELETE /api/assets/:id',
     ],
     timestamp: new Date().toISOString(),
   });
@@ -107,6 +145,16 @@ const server = app.listen(PORT, async () => {
   console.log(`\n👤 User Endpoints:`);
   console.log(`  GET  /api/users/profile  — User profile`);
   console.log(`  GET  /api/users/dashboard — Stats & activity`);
+  console.log(`\n📜 Script Endpoints (Phase 3):`);
+  console.log(`  POST /api/scripts        — Create script`);
+  console.log(`  GET  /api/scripts        — List scripts`);
+  console.log(`  POST /api/scripts/:id/parse — AI scene breakdown`);
+  console.log(`\n🎭 Character Endpoints (Phase 3):`);
+  console.log(`  POST /api/characters     — Create character`);
+  console.log(`  GET  /api/characters     — List characters`);
+  console.log(`\n📁 Asset Endpoints (Phase 3):`);
+  console.log(`  POST /api/assets/upload  — Upload files`);
+  console.log(`  GET  /api/assets         — Asset library`);
   console.log(`\n`);
 
   // Test database connection
