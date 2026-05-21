@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   getScript, updateScript, createScript, parseScript,
-  getScriptBreakdown, Script, ScriptParseResult, ScriptBreakdown,
+  getScriptBreakdown, uploadScriptFile,
+  Script, ScriptParseResult, ScriptBreakdown,
   getStoredUser, clearAuth,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -23,12 +24,68 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [parseResult, setParseResult] = useState<ScriptParseResult | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const user = getStoredUser();
 
+  // Load script data
   useEffect(() => {
     if (!user) { router.push("/auth"); return; }
     loadScript();
   }, [projectId]);
+
+  // Auto-save with debounce
+  useEffect(() => {
+    if (!script && content.trim()) {
+      // New unsaved script - mark as unsaved but don't auto-create
+      setAutoSaveStatus("unsaved");
+      return;
+    }
+    if (!script || !content.trim() || content === script.script_content) {
+      if (content === script?.script_content) setAutoSaveStatus("saved");
+      return;
+    }
+
+    setAutoSaveStatus("unsaved");
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      setAutoSaveStatus("saving");
+      const result = await updateScript(script!.id, {
+        script_title: title,
+        script_content: content,
+        genre: genre || undefined,
+      });
+      if (result.ok && result.data) {
+        setScript(result.data.script);
+        setAutoSaveStatus("saved");
+      } else {
+        setAutoSaveStatus("unsaved");
+      }
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [content, title, genre]);
+
+  // Sync line number scroll with textarea
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    const lineNumbers = lineNumbersRef.current;
+    if (!textarea || !lineNumbers) return;
+
+    const syncScroll = () => {
+      lineNumbers.scrollTop = textarea.scrollTop;
+    };
+    textarea.addEventListener("scroll", syncScroll);
+    return () => textarea.removeEventListener("scroll", syncScroll);
+  }, []);
 
   async function loadScript() {
     setLoading(true);
@@ -39,13 +96,11 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
       setTitle(s.script_title);
       setContent(s.script_content);
       setGenre(s.genre || "");
-      // Load breakdown
       const bdResult = await getScriptBreakdown(projectId);
       if (bdResult.ok && bdResult.data?.parsed) {
         setBreakdown(bdResult.data);
       }
     } else {
-      // New project - show empty editor
       setScript(null);
       setError("");
     }
@@ -55,7 +110,6 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
   async function handleSave() {
     if (!title.trim()) { setError("Title is required"); return; }
     if (!content.trim()) { setError("Script content is required"); return; }
-
     setSaving(true);
     setError("");
     setSuccess("");
@@ -70,6 +124,7 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
         if (result.ok && result.data) {
           setScript(result.data.script);
           setSuccess("Script saved!");
+          setAutoSaveStatus("saved");
         } else {
           setError(result.error || "Save failed");
         }
@@ -82,6 +137,7 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
         if (result.ok && result.data) {
           setScript(result.data.script);
           setSuccess("Script created! You can now parse it.");
+          setAutoSaveStatus("saved");
         } else {
           setError(result.error || "Creation failed");
         }
@@ -93,16 +149,56 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
     }
   }
 
+  // Handle script file upload (.txt, .pdf, .docx)
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processFile(file);
+  }
+
+  async function processFile(file: File) {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (!["txt", "pdf", "docx"].includes(ext || "")) {
+      setError(`Unsupported file type: .${ext}. Use .txt, .pdf, or .docx`);
+      return;
+    }
+
+    setUploading(true);
+    setError("");
+    setSuccess("");
+
+    const result = await uploadScriptFile(file);
+    if (result.ok && result.data) {
+      const d = result.data;
+      setContent(d.extractedText);
+      setTitle(d.suggestedTitle || title || d.fileName.replace(/\.[^.]+$/, ""));
+      if (d.detectedGenre && d.detectedGenre !== "unknown") {
+        setGenre(d.detectedGenre);
+      }
+      setSuccess(`File uploaded! ${d.wordCount.toLocaleString()} words extracted from "${d.fileName}"`);
+    } else {
+      setError(result.error || "Upload failed");
+    }
+    setUploading(false);
+    // Reset file input
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) processFile(file);
+  }
+
   async function handleParse() {
     if (!script) {
       setError("Save the script first before parsing");
       return;
     }
-
     setParsing(true);
     setError("");
     setParseResult(null);
-
     const result = await parseScript(projectId);
     if (result.ok && result.data) {
       setParseResult(result.data);
@@ -111,7 +207,6 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
           ? "AI script breakdown complete!"
           : "Basic script breakdown complete (AI was unavailable)"
       );
-      // Reload breakdown
       const bdResult = await getScriptBreakdown(projectId);
       if (bdResult.ok && bdResult.data) {
         setBreakdown(bdResult.data);
@@ -124,6 +219,31 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
 
   function getWordCount(): number {
     return content.split(/\s+/).filter(Boolean).length;
+  }
+
+  function getLineCount(): number {
+    return content.split("\n").length;
+  }
+
+  // Generate line numbers
+  const lineNumbers = Array.from({ length: Math.max(getLineCount(), 1) }, (_, i) => i + 1);
+
+  // Handle Tab key in textarea
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = e.currentTarget.selectionStart;
+      const end = e.currentTarget.selectionEnd;
+      const newValue = content.substring(0, start) + "    " + content.substring(end);
+      setContent(newValue);
+      // Move cursor after the tab
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.selectionStart = start + 4;
+          textareaRef.current.selectionEnd = start + 4;
+        }
+      });
+    }
   }
 
   if (loading) {
@@ -152,8 +272,35 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500">{getWordCount().toLocaleString()} words</span>
+          <div className="flex items-center gap-3">
+            {/* Auto-save indicator */}
+            {script && (
+              <span className={`text-xs flex items-center gap-1 ${
+                autoSaveStatus === "saved" ? "text-green-400" :
+                autoSaveStatus === "saving" ? "text-amber-400" :
+                "text-zinc-500"
+              }`}>
+                <span className={`inline-block h-1.5 w-1.5 rounded-full ${
+                  autoSaveStatus === "saved" ? "bg-green-400" :
+                  autoSaveStatus === "saving" ? "bg-amber-400 animate-pulse" :
+                  "bg-zinc-600"
+                }`} />
+                {autoSaveStatus === "saved" ? "Saved" : autoSaveStatus === "saving" ? "Saving..." : "Unsaved"}
+              </span>
+            )}
+            <span className="text-xs text-zinc-500">
+              {getWordCount().toLocaleString()} words · {getLineCount().toLocaleString()} lines
+            </span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.pdf,.docx"
+              className="hidden"
+              onChange={handleFileUpload}
+            />
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+              {uploading ? "⏳ Extracting..." : "📂 Upload Script"}
+            </Button>
             <Button variant="outline" size="sm" onClick={() => router.push(`/project/${projectId}`)}>
               Dashboard
             </Button>
@@ -215,11 +362,42 @@ export default function ScriptEditorPage({ params }: { params: { id: string } })
               className="w-full rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-2 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500"
             />
 
-            {/* Text Editor */}
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder={`Paste or type your script here...
+            {/* Drag & Drop Zone for script files */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`rounded-lg border-2 border-dashed p-3 text-center transition cursor-pointer ${
+                dragOver
+                  ? "border-blue-400 bg-blue-500/10"
+                  : "border-zinc-700 hover:border-zinc-600 bg-zinc-900/20"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <p className="text-xs text-zinc-400">
+                {uploading ? "⏳ Extracting text..." : "📂 Drop a script file here (.txt, .pdf, .docx) or click to browse"}
+              </p>
+            </div>
+
+            {/* Line-numbered text editor */}
+            <div className="flex rounded-lg border border-zinc-700 bg-zinc-800/50 focus-within:border-zinc-500 overflow-hidden">
+              {/* Line Numbers */}
+              <div
+                ref={lineNumbersRef}
+                className="select-none overflow-hidden bg-zinc-800/80 py-3 pl-3 pr-2 text-right font-mono text-xs leading-relaxed text-zinc-600 border-r border-zinc-700/50 shrink-0"
+                style={{ minWidth: "3.5rem", maxHeight: "500px" }}
+              >
+                {lineNumbers.map((num) => (
+                  <div key={num}>{num}</div>
+                ))}
+              </div>
+              {/* Textarea */}
+              <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={`Paste or type your script, or upload a file...
 
 Use standard screenplay format:
 INT. COFFEE SHOP - DAY
@@ -230,9 +408,12 @@ I can't believe this is happening.
 
 SARAH
 We need to leave. Now.`}
-              className="w-full min-h-[400px] rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-sm text-white placeholder-zinc-500 outline-none focus:border-zinc-500 font-mono resize-y"
-              spellCheck={false}
-            />
+                className="flex-1 resize-y bg-transparent px-4 py-3 font-mono text-sm leading-relaxed text-white placeholder-zinc-500 outline-none"
+                style={{ minHeight: "400px" }}
+                spellCheck={false}
+                rows={20}
+              />
+            </div>
 
             {/* Action Buttons */}
             <div className="flex gap-3">
@@ -252,6 +433,24 @@ We need to leave. Now.`}
 
           {/* Sidebar: Breakdown Results */}
           <div className="space-y-4">
+            {/* Quick Stats */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <h3 className="font-semibold text-white mb-2 text-sm">📊 Script Stats</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { label: "Words", value: getWordCount().toLocaleString() },
+                  { label: "Lines", value: getLineCount().toLocaleString() },
+                  { label: "Est. Duration", value: `${Math.ceil(getWordCount() / 150)} min` },
+                  { label: "Characters", value: `${Math.ceil(getWordCount() / 5)}` },
+                ].map((stat) => (
+                  <div key={stat.label} className="rounded-lg bg-zinc-800/40 p-2 text-center">
+                    <div className="text-lg font-bold text-white">{stat.value}</div>
+                    <div className="text-[10px] text-zinc-500">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* Parse Result Summary */}
             {parseResult && (
               <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-4">
@@ -269,7 +468,7 @@ We need to leave. Now.`}
             {/* Characters from Breakdown */}
             {breakdown?.parsed && breakdown.characters.length > 0 && (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-                <h3 className="font-semibold text-white mb-3 text-sm">🎭 Characters</h3>
+                <h3 className="font-semibold text-white mb-3 text-sm">🎭 Characters ({breakdown.characters.length})</h3>
                 <div className="space-y-2">
                   {breakdown.characters.map((char) => (
                     <div key={char.id} className="flex items-center gap-2 rounded-lg bg-zinc-800/40 px-3 py-2">
@@ -299,17 +498,19 @@ We need to leave. Now.`}
             {/* Chapters/Scenes Summary */}
             {breakdown?.parsed && breakdown.chapters.length > 0 && (
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-                <h3 className="font-semibold text-white mb-3 text-sm">📖 Chapters</h3>
+                <h3 className="font-semibold text-white mb-3 text-sm">📖 Chapters ({breakdown.chapters.length})</h3>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {breakdown.chapters.map((ch) => {
-                    const chapterScenes = breakdown.scenes.filter((s) => s.chapter_id === ch.id);
+                    const chapterScenes = breakdown.scenes.filter(
+                      (s: any) => s.chapter_id === ch.id
+                    );
                     return (
                       <div key={ch.id} className="rounded-lg bg-zinc-800/40 px-3 py-2">
                         <p className="text-xs font-medium text-white">
                           Ch {ch.chapter_number}: {ch.chapter_title}
                         </p>
                         <p className="text-xs text-zinc-500 mt-0.5">
-                          {chapterScenes.length} scene{chapterScenes.length !== 1 ? "s" : ""} — {ch.content_summary?.slice(0, 80)}...
+                          {chapterScenes.length} scene{chapterScenes.length !== 1 ? "s" : ""} — {(ch.content_summary || "").slice(0, 80)}...
                         </p>
                       </div>
                     );
@@ -322,6 +523,8 @@ We need to leave. Now.`}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
               <h3 className="font-semibold text-white mb-2 text-sm">💡 Tips</h3>
               <ul className="space-y-1 text-xs text-zinc-400">
+                <li>• Upload .txt, .pdf, or .docx files</li>
+                <li>• Auto-save after 2s of inactivity</li>
                 <li>• Use INT./EXT. scene headers for best parsing</li>
                 <li>• ALL CAPS character names before dialogue</li>
                 <li>• AI parsing requires Anthropic API access</li>

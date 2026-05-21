@@ -9,7 +9,28 @@ import * as scriptModel from '../models/scriptModel';
 import * as characterModel from '../models/characterModel';
 import * as sceneModel from '../models/sceneModel';
 import { parseScriptWithClaude, parseScriptBasic, ScriptParseResult } from '../services/scriptParser';
+import { extractTextFromFile, validateScriptFile, guessTitleFromFilename, ExtractionResult } from '../services/textExtractor';
+import { saveFile, deleteFile, validateFile } from '../services/assetService';
+import multer from 'multer';
+import path from 'path';
 import pool from '../config/database';
+
+// Configure multer for script file uploads (memory storage)
+const scriptUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.txt', '.pdf', '.docx'].includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type "${ext}" is not supported. Upload .txt, .pdf, or .docx files.`));
+    }
+  },
+}).single('file');
 
 /**
  * POST /api/scripts
@@ -371,3 +392,114 @@ export const getScriptBreakdown = async (req: AuthRequest, res: Response, next: 
     next(err);
   }
 };
+
+/**
+ * POST /api/scripts/upload-file
+ * Upload a script file (.txt, .pdf, .docx) and extract text
+ * Creates a new script from the extracted text
+ */
+export const uploadScriptFile = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  scriptUpload(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      if (uploadErr.message?.includes('File type')) {
+        return res.status(400).json({ error: uploadErr.message });
+      }
+      if (uploadErr.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File too large. Max 10MB.' });
+      }
+      return res.status(400).json({ error: uploadErr.message });
+    }
+
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    let tempPath: string | null = null;
+
+    try {
+      // Validate file
+      const validation = validateScriptFile(
+        file.mimetype,
+        file.originalname,
+        file.size
+      );
+      if (!validation.valid) {
+        return res.status(400).json({ error: validation.error });
+      }
+
+      // Save to temp location for extraction
+      const userId = req.user!.id;
+      const saved = await saveFile(file.buffer, file.originalname, userId);
+      const { getAbsolutePath } = require('../services/assetService');
+      tempPath = getAbsolutePath(saved.filePath);
+
+      // Extract text
+      const extracted: ExtractionResult = await extractTextFromFile(
+        tempPath!,
+        file.originalname
+      );
+
+      // Clean up temp file after extraction
+      if (tempPath) {
+        const { unlink } = require('fs').promises;
+        await unlink(tempPath).catch(() => {});
+        tempPath = null;
+      }
+
+      if (!extracted.success) {
+        return res.status(400).json({ error: extracted.error });
+      }
+
+      // Auto-generate title from filename
+      const autoTitle = guessTitleFromFilename(file.originalname);
+
+      // Detect genre from content (basic keyword matching)
+      const genre = detectGenreFromText(extracted.text);
+
+      res.json({
+        message: 'File uploaded and text extracted',
+        fileName: extracted.fileName,
+        wordCount: extracted.wordCount,
+        suggestedTitle: autoTitle,
+        detectedGenre: genre,
+        extractedText: extracted.text,
+      });
+    } catch (err: any) {
+      // Clean up temp file on error
+      if (tempPath) {
+        const { unlink } = require('fs').promises;
+        await unlink(tempPath).catch(() => {});
+      }
+      next(err);
+    }
+  });
+};
+
+/**
+ * Basic keyword-based genre detection
+ */
+function detectGenreFromText(text: string): string {
+  const lower = text.toLowerCase();
+  const patterns: Record<string, string[]> = {
+    'sci-fi': ['spaceship', 'alien', 'robot', 'planet', 'galaxy', 'laser', 'android', 'cyber', 'future', 'space station', 'warp'],
+    'fantasy': ['dragon', 'wizard', 'magic', 'castle', 'sword', 'elf', 'dwarf', 'spell', 'kingdom', 'quest', 'mythical'],
+    'horror': ['monster', 'ghost', 'haunted', 'zombie', 'vampire', 'blood', 'terror', 'scream', 'darkness', 'nightmare'],
+    'action': ['explosion', 'chase', 'gun', 'fight', 'battle', 'escape', 'mission', 'bomb', 'helicopter', 'agent'],
+    'romance': ['love', 'kiss', 'heart', 'romantic', 'marriage', 'wedding', 'dating', 'boyfriend', 'girlfriend', 'passion'],
+    'comedy': ['laugh', 'funny', 'joke', 'hilarious', 'prank', 'slapstick', 'gag', 'witty', 'absurd'],
+    'drama': ['tragedy', 'emotional', 'conflict', 'family', 'divorce', 'death', 'betrayal', 'struggle', 'crisis'],
+    'thriller': ['suspense', 'mystery', 'murder', 'detective', 'conspiracy', 'secret', 'spy', 'crime', 'investigation'],
+  };
+
+  const scores: Record<string, number> = {};
+  for (const [genre, keywords] of Object.entries(patterns)) {
+    scores[genre] = keywords.reduce((count, kw) => {
+      const regex = new RegExp(`\\b${kw}\\b`, 'gi');
+      return count + (lower.match(regex)?.length || 0);
+    }, 0);
+  }
+
+  const best = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+  return best && best[1] > 0 ? best[0] : 'unknown';
+}

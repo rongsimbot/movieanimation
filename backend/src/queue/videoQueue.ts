@@ -1,16 +1,19 @@
 /**
  * videoQueue.ts - Redis/BullMQ Video Generation Queue
- * Enhanced with batch generation, progress tracking, and cost monitoring
+ * Enhanced with key rotation, cross-API failover, webhook notifications,
+ * batch progress tracking, and cost monitoring.
  */
 
 import { Queue, Worker, Job, QueueEvents } from 'bullmq';
 import IORedis from 'ioredis';
-import axios from 'axios';
 import { generateVideo, VideoGenRequest } from '../services/videoGenerator';
 import { routeScene, SceneProfile } from '../services/apiRouter';
 import { engineerPrompt, ScriptScene, parseScriptToScenes } from '../services/promptEngineer';
 import { progressService } from '../services/progressService';
 import { getUsageSummary } from '../services/costTracker';
+import { fireWebhook } from '../services/webhookManager';
+import { getFailoverHealth } from '../services/apiFailover';
+import { ApiProvider } from '../services/keyManager';
 
 const connection = new IORedis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', {
   maxRetriesPerRequest: null,
@@ -24,7 +27,7 @@ export const videoQueue = new Queue('video-generation', {
     attempts: 3,
     backoff: { type: 'exponential', delay: 2000 },
     removeOnComplete: 100,
-    removeOnFail: 200, // Keep recent failures for debugging
+    removeOnFail: 200,
   },
 });
 
@@ -38,7 +41,6 @@ export const sceneQueue = new Queue('scene-generation', {
   },
 });
 
-// Queue events for monitoring
 const queueEvents = new QueueEvents('video-generation', { connection });
 const sceneEvents = new QueueEvents('scene-generation', { connection });
 
@@ -47,7 +49,7 @@ const sceneEvents = new QueueEvents('scene-generation', { connection });
 export interface VideoJobData {
   prompt: string;
   userId?: string;
-  apiName?: 'sora' | 'runway' | 'seedance' | 'luma';
+  apiName?: ApiProvider;
   projectId?: string;
   sceneId?: string;
   imageUrl?: string;
@@ -78,9 +80,6 @@ export interface BatchJobData {
 
 // ---- Job Adders ----
 
-/**
- * Add a single video generation job
- */
 export const addVideoJob = async (
   prompt: string,
   userId?: string,
@@ -107,15 +106,10 @@ export const addVideoJob = async (
   return job;
 };
 
-/**
- * Add a batch scene generation job
- * Parses a script, engineers prompts, routes to optimal APIs, and queues all scenes
- */
 export const addBatchJob = async (data: BatchJobData) => {
   const { userId, projectId, scenes, budget } = data;
 
-  // Initialize batch progress tracking
-  const estimatedUnitCost = 0.05; // rough estimate
+  const estimatedUnitCost = 0.05;
   const estimatedTotalCost = scenes.length * 5 * estimatedUnitCost;
   progressService.initBatch(projectId, scenes.length, estimatedTotalCost);
   progressService.updateProgress({
@@ -127,10 +121,8 @@ export const addBatchJob = async (data: BatchJobData) => {
     message: `Batch generation starting: ${scenes.length} scenes`,
   });
 
-  // Engineer prompts for all scenes
   const engineeredPrompts = scenes.map(s => engineerPrompt(s));
 
-  // Route each scene to optimal API
   const sceneProfiles: SceneProfile[] = scenes.map((s, i) => ({
     sceneNumber: s.sceneNumber,
     description: s.rawText,
@@ -142,7 +134,6 @@ export const addBatchJob = async (data: BatchJobData) => {
     requiresHighQuality: budget?.preferQuality || false,
   }));
 
-  // Create individual generation jobs for each scene
   const jobs: Job[] = [];
   let totalEstimatedCost = 0;
 
@@ -151,7 +142,6 @@ export const addBatchJob = async (data: BatchJobData) => {
     const profile = sceneProfiles[i];
     const prompt = engineeredPrompts[i];
 
-    // Route to best API
     const decision = routeScene(profile, budget ? {
       maxCostPerScene: budget.maxCostPerScene,
       maxCostPerProject: budget.maxCostPerProject ?? Infinity,
@@ -179,7 +169,6 @@ export const addBatchJob = async (data: BatchJobData) => {
     jobs.push(job);
   }
 
-  // Update batch progress
   progressService.updateProgress({
     jobId: `batch:${projectId}`,
     projectId,
@@ -187,10 +176,7 @@ export const addBatchJob = async (data: BatchJobData) => {
     state: 'generating',
     progress: 5,
     message: `${jobs.length} scenes queued across APIs. Estimated cost: $${totalEstimatedCost.toFixed(2)}`,
-    metadata: {
-      totalJobs: jobs.length,
-      estimatedCost: totalEstimatedCost,
-    },
+    metadata: { totalJobs: jobs.length, estimatedCost: totalEstimatedCost },
   });
 
   return {
@@ -203,19 +189,12 @@ export const addBatchJob = async (data: BatchJobData) => {
 
 // ---- Workers ----
 
-/**
- * Process single video generation
- */
 export const videoWorker = new Worker('video-generation', async (job: Job<VideoJobData>) => {
   const { prompt, userId, apiName, projectId, sceneId, imageUrl, duration, quality, webhookUrl } = job.data;
 
   progressService.updateProgress({
-    jobId: job.id || 'unknown',
-    userId,
-    projectId,
-    sceneId,
-    state: 'starting',
-    progress: 10,
+    jobId: job.id || 'unknown', userId, projectId, sceneId,
+    state: 'starting', progress: 10,
     message: `Starting ${apiName} video generation`,
   });
 
@@ -224,60 +203,59 @@ export const videoWorker = new Worker('video-generation', async (job: Job<VideoJ
   try {
     const request: VideoGenRequest = {
       prompt,
-      apiName: (apiName as VideoGenRequest['apiName']) || 'sora',
-      userId,
-      projectId,
-      sceneId,
-      imageUrl,
-      duration,
-      quality,
+      apiName: (apiName as ApiProvider) || 'sora',
+      userId, projectId, sceneId, imageUrl, duration, quality,
     };
 
-    // Update progress: generating
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'generating',
-      progress: 30,
-      message: `Calling ${apiName} API...`,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'generating', progress: 30,
+      message: `Calling ${apiName} API with failover protection...`,
     });
 
     const result = await generateVideo(request);
 
-    // Update progress: completed
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'completed',
-      progress: 100,
-      message: `Video generated successfully (${apiName})`,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'completed', progress: 100,
+      message: result.failover?.apiUsed !== request.apiName
+        ? `Video generated via failover: ${result.failover?.apiUsed} (was: ${request.apiName})`
+        : `Video generated successfully (${result.apiUsed})`,
       metadata: {
         videoUrl: result.videoUrl,
         generationId: result.generationId,
         apiUsed: result.apiUsed,
         cost: result.cost,
         duration: result.duration,
+        failover: result.failover || null,
       },
     });
 
-    // Fire webhook if configured
+    // Fire webhook for completion via webhook manager
+    await fireWebhook('job.completed', {
+      jobId: job.id,
+      projectId,
+      sceneId,
+      status: 'completed',
+      result: {
+        videoUrl: result.videoUrl,
+        cost: result.cost,
+        apiUsed: result.apiUsed,
+        failover: result.failover || null,
+      },
+    });
+
+    // Also send to legacy webhook URL if provided
     if (webhookUrl) {
       try {
+        const axios = require('axios');
         await axios.post(webhookUrl, {
           jobId: job.id,
           status: 'completed',
-          result: {
-            videoUrl: result.videoUrl,
-            cost: result.cost,
-            apiUsed: result.apiUsed,
-          },
+          result: { videoUrl: result.videoUrl, cost: result.cost, apiUsed: result.apiUsed },
         });
       } catch (e) {
-        console.error('[Webhook] Failed to send completion webhook:', e);
+        console.error('[Webhook] Legacy webhook failed:', e);
       }
     }
 
@@ -287,50 +265,41 @@ export const videoWorker = new Worker('video-generation', async (job: Job<VideoJ
       generationId: result.generationId,
       apiUsed: result.apiUsed,
       cost: result.cost,
+      failover: result.failover || null,
     };
   } catch (error: any) {
-    // Update progress: failed
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'failed',
-      progress: 0,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'failed', progress: 0,
       message: `Generation failed: ${error.message}`,
       metadata: { error: error.message },
     });
 
-    // Fire webhook for failure
+    await fireWebhook('job.failed', {
+      jobId: job.id,
+      projectId,
+      sceneId,
+      status: 'failed',
+      error: error.message,
+    });
+
     if (webhookUrl) {
       try {
-        await axios.post(webhookUrl, {
-          jobId: job.id,
-          status: 'failed',
-          error: error.message,
-        });
-      } catch (e) {
-        console.error('[Webhook] Failed to send failure webhook:', e);
-      }
+        const axios = require('axios');
+        await axios.post(webhookUrl, { jobId: job.id, status: 'failed', error: error.message });
+      } catch (e) { /* ignore */ }
     }
 
     throw new Error(`Video generation failed: ${error.message}`);
   }
 }, { connection });
 
-/**
- * Process scene generation (batch worker)
- */
 export const sceneWorker = new Worker('scene-generation', async (job: Job) => {
   const { prompt, negativePrompt, userId, projectId, sceneId, sceneNumber, apiName, duration, quality, imageUrl, styleNotes } = job.data;
 
   progressService.updateProgress({
-    jobId: job.id || 'unknown',
-    userId,
-    projectId,
-    sceneId,
-    state: 'starting',
-    progress: 10,
+    jobId: job.id || 'unknown', userId, projectId, sceneId,
+    state: 'starting', progress: 10,
     message: `Scene ${sceneNumber}: Starting ${apiName} generation`,
     metadata: { styleNotes, negativePrompt },
   });
@@ -339,34 +308,23 @@ export const sceneWorker = new Worker('scene-generation', async (job: Job) => {
     const request: VideoGenRequest = {
       prompt,
       apiName: apiName || 'sora',
-      userId,
-      projectId,
-      sceneId,
-      imageUrl,
+      userId, projectId, sceneId, imageUrl,
       duration: duration || 5,
       quality: quality || 'high',
     };
 
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'generating',
-      progress: 30,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'generating', progress: 30,
       message: `Scene ${sceneNumber}: Calling ${apiName} API...`,
     });
 
     const result = await generateVideo(request);
 
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'completed',
-      progress: 100,
-      message: `Scene ${sceneNumber}: Generated with ${apiName} ($${result.cost.toFixed(2)})`,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'completed', progress: 100,
+      message: `Scene ${sceneNumber}: Generated with ${result.apiUsed} ($${result.cost.toFixed(2)})`,
       metadata: {
         videoUrl: result.videoUrl,
         generationId: result.generationId,
@@ -374,6 +332,14 @@ export const sceneWorker = new Worker('scene-generation', async (job: Job) => {
         cost: result.cost,
         duration: result.duration,
       },
+    });
+
+    await fireWebhook('job.completed', {
+      jobId: job.id,
+      projectId,
+      sceneId,
+      status: 'completed',
+      result: { videoUrl: result.videoUrl, apiUsed: result.apiUsed, cost: result.cost },
     });
 
     return {
@@ -385,14 +351,18 @@ export const sceneWorker = new Worker('scene-generation', async (job: Job) => {
     };
   } catch (error: any) {
     progressService.updateProgress({
-      jobId: job.id || 'unknown',
-      userId,
-      projectId,
-      sceneId,
-      state: 'failed',
-      progress: 0,
+      jobId: job.id || 'unknown', userId, projectId, sceneId,
+      state: 'failed', progress: 0,
       message: `Scene ${sceneNumber}: Failed - ${error.message}`,
       metadata: { error: error.message },
+    });
+
+    await fireWebhook('job.failed', {
+      jobId: job.id,
+      projectId,
+      sceneId,
+      status: 'failed',
+      error: error.message,
     });
 
     throw error;
@@ -403,31 +373,68 @@ export const sceneWorker = new Worker('scene-generation', async (job: Job) => {
 
 videoWorker.on('completed', async (job) => {
   console.log(`[Queue] Job ${job.id} completed (${job.data.apiName})`);
+
+  // Fire batch webhook if part of a project
+  if (job.data.projectId) {
+    const batch = progressService.getBatchProgress(job.data.projectId);
+    if (batch && batch.overallProgress >= 100) {
+      await fireWebhook('batch.completed', {
+        batchId: `batch:${job.data.projectId}`,
+        projectId: job.data.projectId,
+        status: 'completed',
+        result: { totalScenes: batch.totalScenes, completedScenes: batch.completedScenes },
+      });
+    }
+  }
 });
 
 videoWorker.on('failed', async (job, err) => {
-  console.error(`[Queue] Job ${job?.id} failed:`, err.message);
+  console.error(`[Queue] Job ${job?.id} failed:`, err?.message);
 
   if (job && job.data.webhookUrl) {
     try {
+      const axios = require('axios');
       await axios.post(job.data.webhookUrl, {
-        jobId: job.id,
-        status: 'failed',
-        error: err.message,
+        jobId: job.id, status: 'failed', error: err?.message,
       });
     } catch (e) { /* ignore */ }
+  }
+
+  if (job?.data.projectId) {
+    await fireWebhook('batch.failed', {
+      batchId: `batch:${job.data.projectId}`,
+      projectId: job.data.projectId,
+      status: 'failed',
+      error: err?.message,
+    });
   }
 });
 
 sceneWorker.on('completed', async (job) => {
   console.log(`[Queue] Scene job ${job.id} completed (scene ${job.data.sceneNumber})`);
+
+  if (job.data.projectId) {
+    const batch = progressService.getBatchProgress(job.data.projectId);
+    if (batch && batch.overallProgress >= 100) {
+      await fireWebhook('batch.completed', {
+        batchId: `batch:${job.data.projectId}`,
+        projectId: job.data.projectId,
+        status: 'completed',
+        result: {
+          totalScenes: batch.totalScenes,
+          completedScenes: batch.completedScenes,
+          failedScenes: batch.failedScenes,
+        },
+      });
+    }
+  }
 });
 
 sceneWorker.on('failed', async (job, err) => {
-  console.error(`[Queue] Scene job ${job?.id} failed:`, err.message);
+  console.error(`[Queue] Scene job ${job?.id} failed:`, err?.message);
 });
 
-// ---- Pending Batches Tracking ----
+// ---- Queue Events ----
 
 queueEvents.on('completed', ({ jobId }) => {
   console.log(`[QueueEvents] Job ${jobId} completed`);
@@ -440,24 +447,15 @@ queueEvents.on('failed', ({ jobId, failedReason }) => {
 // ---- Utility ----
 
 function inferImportance(scene: ScriptScene, index: number, totalScenes: number): SceneProfile['importance'] {
-  // First and last scenes are usually important
   if (index === 0) return 'hero';
   if (index === totalScenes - 1) return 'major';
-
-  // Check for importance keywords in the scene text
   const text = (scene.action + ' ' + scene.dialogue + ' ' + scene.rawText).toLowerCase();
   const heroicWords = ['climax', 'battle', 'confrontation', 'reveal', 'twist', 'hero', 'victory', 'final'];
   const majorWords = ['important', 'key', 'pivotal', 'critical', 'major', 'crucial'];
-
   if (heroicWords.some(w => text.includes(w))) return 'hero';
   if (majorWords.some(w => text.includes(w))) return 'major';
-
-  // Dialogue-heavy scenes are usually major
   if ((scene.dialogue?.length || 0) > 200) return 'major';
-
-  // Short transitional scenes = filler
   if ((scene.action?.length || 0) < 50) return 'filler';
-
   return 'minor';
 }
 
@@ -468,9 +466,7 @@ function inferComplexity(scene: ScriptScene): SceneProfile['complexity'] {
     'transformation', 'magic', 'particles', 'multiple', 'many',
     'complex', 'intricate', 'detailed', 'elaborate',
   ];
-
   const complexCount = complexIndicators.filter(w => text.includes(w)).length;
-
   if (complexCount >= 3) return 'high';
   if (complexCount >= 1) return 'medium';
   return 'low';

@@ -1,16 +1,19 @@
 /**
  * videoGenerator.ts - Multi-API Video Generation Service
- * Integrates Sora, Runway, Seedance APIs with retry logic and cost tracking
+ * Integrates Sora, Runway, Seedance APIs with key rotation,
+ * cross-API failover, retry logic, and cost tracking.
  */
 
-import axios, { AxiosError } from 'axios';
-import { trackCost, CostEntry } from './costTracker';
+import axios from 'axios';
+import { trackCost, trackFailedCost } from './costTracker';
+import { getApiKey, markKeyRateLimited, markKeySuccess, markKeyFailed, ApiProvider } from './keyManager';
+import { executeWithFailover, reportSuccess, reportFailure, FailoverResult } from './apiFailover';
 
 // ---- Types ----
 
 export interface VideoGenRequest {
   prompt: string;
-  apiName: 'sora' | 'runway' | 'seedance' | 'luma';
+  apiName: ApiProvider;
   duration?: number;
   aspectRatio?: string;
   quality?: 'standard' | 'high';
@@ -27,6 +30,7 @@ export interface VideoGenResponse {
   cost: number;
   duration: number;
   thumbnailUrl?: string;
+  failover?: FailoverResult;
 }
 
 export interface GenerationStatus {
@@ -53,118 +57,83 @@ const DEFAULT_RETRY_CONFIG: RetryConfig = {
   backoffMultiplier: 2,
 };
 
-/**
- * Exponential backoff with jitter
- */
 function getRetryDelay(attempt: number, config: RetryConfig): number {
   const exponentialDelay = config.baseDelayMs * Math.pow(config.backoffMultiplier, attempt);
   const jitter = Math.random() * 1000;
   return Math.min(exponentialDelay + jitter, config.maxDelayMs);
 }
 
-/**
- * Generic retry wrapper for API calls
- */
+function classifyError(error: any): 'retryable' | 'fatal' {
+  if (!error.response) return 'retryable';
+  const status = error.response.status;
+  if (status === 429 || status >= 500 || status === 408) return 'retryable';
+  if (status === 401 || status === 403 || status === 400 || status === 404) return 'fatal';
+  return 'retryable';
+}
+
 async function withRetry<T>(
   fn: () => Promise<T>,
   config: RetryConfig = DEFAULT_RETRY_CONFIG,
   errorClassifier?: (error: any) => 'retryable' | 'fatal'
 ): Promise<T> {
   let lastError: any;
-
   for (let attempt = 0; attempt < config.maxAttempts; attempt++) {
     try {
       return await fn();
     } catch (error: any) {
       lastError = error;
-
-      // Classify the error
       const classification = errorClassifier ? errorClassifier(error) : classifyError(error);
-
-      if (classification === 'fatal' || attempt === config.maxAttempts - 1) {
-        throw error;
-      }
-
-      // Rate limited? Use Retry-After header if available
+      if (classification === 'fatal' || attempt === config.maxAttempts - 1) throw error;
       let delay = getRetryDelay(attempt, config);
       if (error.response?.status === 429) {
         const retryAfter = parseInt(error.response?.headers?.['retry-after'] || '0', 10);
         if (retryAfter > 0) delay = retryAfter * 1000;
       }
-
       console.log(`[Retry] Attempt ${attempt + 1}/${config.maxAttempts} failed. Retrying in ${delay}ms...`);
-      console.log(`[Retry] Error: ${error.message}`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
-
   throw lastError;
 }
 
-/**
- * Classify API errors as retryable or fatal
- */
-function classifyError(error: any): 'retryable' | 'fatal' {
-  if (!error.response) return 'retryable'; // Network errors
+// ---- API Base URLs ----
 
-  const status = error.response.status;
+const API_CONFIG: Record<ApiProvider, { baseUrl: string; costPerSecond: number; maxDuration: number }> = {
+  sora: { baseUrl: 'https://api.openai.com/v1/videos', costPerSecond: 0.20, maxDuration: 10 },
+  runway: { baseUrl: 'https://api.dev.runwayml.com/v1', costPerSecond: 0.05, maxDuration: 10 },
+  seedance: { baseUrl: 'https://api.seedance.io/v1', costPerSecond: 0.02, maxDuration: 5 },
+  luma: { baseUrl: 'https://api.lumalabs.ai/dream-machine/v1', costPerSecond: 0.03, maxDuration: 5 },
+};
 
-  // Retryable: rate limits, server errors, timeouts
-  if (status === 429 || status >= 500 || status === 408) return 'retryable';
+// ---- Per-API Generation Functions ----
 
-  // Fatal: auth errors, bad requests (content policy), not found
-  if (status === 401 || status === 403 || status === 400 || status === 404) return 'fatal';
+async function generateSora(request: VideoGenRequest): Promise<VideoGenResponse> {
+  const apiKey = getApiKey('sora');
+  const cfg = API_CONFIG.sora;
 
-  return 'retryable';
-}
-
-// ---- OpenAI Sora Integration ----
-
-const SORA_API_KEY = process.env.OPENAI_API_KEY || '';
-const SORA_BASE_URL = 'https://api.openai.com/v1/videos';
-
-/**
- * Generate video using OpenAI Sora API
- */
-export async function generateVideoSora(request: VideoGenRequest): Promise<VideoGenResponse> {
-  console.log(`[Sora] Generating video with prompt: "${request.prompt.substring(0, 80)}..."`);
+  console.log(`[Sora] Generating with key (length:${apiKey.length})...`);
 
   return withRetry(async () => {
     const payload: any = {
       model: 'sora-2',
       prompt: request.prompt,
-      duration: request.duration || 5,
+      duration: Math.min(request.duration || 5, cfg.maxDuration),
       aspect_ratio: request.aspectRatio || '16:9',
       quality: request.quality || 'high',
     };
+    if (request.imageUrl) payload.image_url = request.imageUrl;
 
-    if (request.imageUrl) {
-      payload.image_url = request.imageUrl;
-    }
-
-    const response = await axios.post(
-      `${SORA_BASE_URL}/generations`,
-      payload,
-      {
-        headers: {
-          'Authorization': `Bearer ${SORA_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
+    const response = await axios.post(`${cfg.baseUrl}/generations`, payload, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
 
     const generationId = response.data.id;
-    console.log(`[Sora] Generation started: ${generationId}`);
+    const videoUrl = await pollSoraGeneration(generationId, apiKey);
 
-    // Poll for completion
-    const videoUrl = await pollSoraGeneration(generationId);
+    const cost = (request.duration || 5) * cfg.costPerSecond;
+    markKeySuccess('sora', apiKey, cost);
 
-    // Calculate cost
-    const costPerSecond = request.quality === 'high' ? 0.20 : 0.10;
-    const cost = (request.duration || 5) * costPerSecond;
-
-    // Track cost
     trackCost({
       apiName: 'sora',
       userId: request.userId,
@@ -175,274 +144,181 @@ export async function generateVideoSora(request: VideoGenRequest): Promise<Video
       prompt: request.prompt,
     });
 
-    return {
-      videoUrl,
-      generationId,
-      apiUsed: 'sora',
-      cost,
-      duration: request.duration || 5,
-    };
-  }, DEFAULT_RETRY_CONFIG, classifyError);
+    return { videoUrl, generationId, apiUsed: 'sora', cost, duration: request.duration || 5 };
+  }, DEFAULT_RETRY_CONFIG, (error) => {
+    const classification = classifyError(error);
+    if (classification === 'fatal') {
+      markKeyFailed('sora', apiKey, `Fatal: ${error.message}`);
+    } else if (error.response?.status === 429) {
+      markKeyRateLimited('sora', apiKey);
+    }
+    return classification;
+  });
 }
 
-async function pollSoraGeneration(generationId: string, maxAttempts = 30): Promise<string> {
+async function pollSoraGeneration(generationId: string, apiKey: string, maxAttempts = 30): Promise<string> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 10000));
-
-    const statusRes = await axios.get(
-      `${SORA_BASE_URL}/generations/${generationId}`,
-      { headers: { 'Authorization': `Bearer ${SORA_API_KEY}` } }
-    );
-
+    const statusRes = await axios.get(`${API_CONFIG.sora.baseUrl}/generations/${generationId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
     const state = statusRes.data.status || statusRes.data.state;
-
     if (state === 'completed' || state === 'succeeded') {
       const videoUrl = statusRes.data.video_url || statusRes.data.assets?.video;
       if (!videoUrl) throw new Error('Sora generation completed but no video URL returned');
-      console.log(`[Sora] Generation ${generationId} completed`);
       return videoUrl;
     }
-
-    if (state === 'failed') {
-      throw new Error(`Sora generation failed: ${statusRes.data.failure_reason || 'Unknown error'}`);
-    }
-
-    console.log(`[Sora] Polling ${generationId} - attempt ${attempt + 1}/${maxAttempts} - state: ${state}`);
+    if (state === 'failed') throw new Error(`Sora generation failed: ${statusRes.data.failure_reason || 'Unknown error'}`);
   }
-
   throw new Error('Sora generation timed out after 5 minutes');
 }
 
-// ---- Runway Gen-4.5 Integration ----
+async function generateRunway(request: VideoGenRequest): Promise<VideoGenResponse> {
+  const apiKey = getApiKey('runway');
+  const cfg = API_CONFIG.runway;
 
-const RUNWAY_API_KEY = process.env.RUNWAY_API_KEY || '';
-const RUNWAY_BASE_URL = 'https://api.dev.runwayml.com/v1';
-
-/**
- * Generate video using Runway Gen-4.5 API
- * NOTE: Runway requires image-to-video (imageUrl must be provided or generated first)
- */
-export async function generateVideoRunway(request: VideoGenRequest): Promise<VideoGenResponse> {
-  console.log(`[Runway] Generating video with prompt: "${request.prompt.substring(0, 80)}..."`);
+  console.log(`[Runway] Generating with key (length:${apiKey.length})...`);
 
   return withRetry(async () => {
-    // Runway Gen-4.5 uses image-to-video primarily
     if (!request.imageUrl) {
-      console.warn('[Runway] No imageUrl provided - Runway works best with image-to-video. Using text-only mode.');
+      console.warn('[Runway] No imageUrl provided - Runway works best with image-to-video.');
     }
 
     const payload: any = {
       model: 'gen4.5',
       promptText: request.prompt,
       ratio: '1280:720',
-      duration: request.duration || 5,
+      duration: Math.min(request.duration || 5, cfg.maxDuration),
       generateAudio: false,
     };
+    if (request.imageUrl) payload.imageUrl = request.imageUrl;
 
-    if (request.imageUrl) {
-      payload.imageUrl = request.imageUrl;
-    }
-
-    const response = await axios.post(
-      `${RUNWAY_BASE_URL}/text_to_video`,
-      payload,
-      {
-        headers: {
-          'Authorization': `Bearer ${RUNWAY_API_KEY}`,
-          'X-Runway-Version': '2024-11-06',
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-
-    const taskId = response.data.id;
-    console.log(`[Runway] Task started: ${taskId}`);
-
-    const videoUrl = await pollRunwayTask(taskId);
-
-    // Cost estimation (Runway: ~$0.05/second)
-    const costPerSecond = 0.05;
-    const cost = (request.duration || 5) * costPerSecond;
-
-    trackCost({
-      apiName: 'runway',
-      userId: request.userId,
-      projectId: request.projectId,
-      sceneId: request.sceneId,
-      creditsUsed: cost,
-      generationId: taskId,
-      prompt: request.prompt,
+    const response = await axios.post(`${cfg.baseUrl}/text_to_video`, payload, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'X-Runway-Version': '2024-11-06',
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
     });
 
-    return {
-      videoUrl,
-      generationId: taskId,
-      apiUsed: 'runway',
-      cost,
-      duration: request.duration || 5,
-    };
-  }, DEFAULT_RETRY_CONFIG, classifyError);
+    const taskId = response.data.id;
+    const videoUrl = await pollRunwayTask(taskId, apiKey);
+
+    const cost = (request.duration || 5) * cfg.costPerSecond;
+    markKeySuccess('runway', apiKey, cost);
+
+    trackCost({
+      apiName: 'runway', userId: request.userId, projectId: request.projectId,
+      sceneId: request.sceneId, creditsUsed: cost, generationId: taskId, prompt: request.prompt,
+    });
+
+    return { videoUrl, generationId: taskId, apiUsed: 'runway', cost, duration: request.duration || 5 };
+  }, DEFAULT_RETRY_CONFIG, (error) => {
+    const classification = classifyError(error);
+    if (classification === 'fatal') markKeyFailed('runway', apiKey, `Fatal: ${error.message}`);
+    else if (error.response?.status === 429) markKeyRateLimited('runway', apiKey);
+    return classification;
+  });
 }
 
-async function pollRunwayTask(taskId: string, maxAttempts = 30): Promise<string> {
+async function pollRunwayTask(taskId: string, apiKey: string, maxAttempts = 30): Promise<string> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 10000));
-
-    const statusRes = await axios.get(
-      `${RUNWAY_BASE_URL}/tasks/${taskId}`,
-      {
-        headers: {
-          'Authorization': `Bearer ${RUNWAY_API_KEY}`,
-          'X-Runway-Version': '2024-11-06',
-        },
-      }
-    );
-
-    const status = statusRes.data.status;
-
-    if (status === 'SUCCEEDED') {
+    const statusRes = await axios.get(`${API_CONFIG.runway.baseUrl}/tasks/${taskId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'X-Runway-Version': '2024-11-06' },
+    });
+    if (statusRes.data.status === 'SUCCEEDED') {
       const videoUrl = statusRes.data.output?.[0];
-      if (!videoUrl) throw new Error('Runway task succeeded but no output URL returned');
-      console.log(`[Runway] Task ${taskId} completed`);
+      if (!videoUrl) throw new Error('Runway task succeeded but no output URL');
       return videoUrl;
     }
-
-    if (status === 'FAILED') {
-      throw new Error(`Runway generation failed for task ${taskId}`);
-    }
-
-    console.log(`[Runway] Polling ${taskId} - attempt ${attempt + 1}/${maxAttempts} - status: ${status}`);
+    if (statusRes.data.status === 'FAILED') throw new Error('Runway generation failed');
   }
-
-  throw new Error('Runway generation timed out after 5 minutes');
+  throw new Error('Runway generation timed out');
 }
 
-// ---- Seedance 2.0 Integration ----
+async function generateSeedance(request: VideoGenRequest): Promise<VideoGenResponse> {
+  const apiKey = getApiKey('seedance');
+  const cfg = API_CONFIG.seedance;
 
-const SEEDANCE_API_KEY = process.env.SEEDANCE_API_KEY || '';
-const SEEDANCE_BASE_URL = 'https://api.seedance.io/v1';
-
-/**
- * Generate video using Seedance 2.0 API
- * Best for volume/social clips, fastest generation
- */
-export async function generateVideoSeedance(request: VideoGenRequest): Promise<VideoGenResponse> {
-  console.log(`[Seedance] Generating video with prompt: "${request.prompt.substring(0, 80)}..."`);
+  console.log(`[Seedance] Generating with key (length:${apiKey.length})...`);
 
   return withRetry(async () => {
     const payload: any = {
       text_prompt: request.prompt,
-      duration: Math.min(request.duration || 3, 5), // Seedance max is 5 seconds
+      duration: Math.min(request.duration || 3, cfg.maxDuration),
       aspect_ratio: request.aspectRatio || '16:9',
     };
+    if (request.imageUrl) payload.image_input = request.imageUrl;
 
-    if (request.imageUrl) {
-      payload.image_input = request.imageUrl;
-    }
-
-    const response = await axios.post(
-      `${SEEDANCE_BASE_URL}/generate`,
-      payload,
-      {
-        headers: {
-          'Authorization': `Bearer ${SEEDANCE_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
-
-    const generationId = response.data.generation_id || response.data.id;
-    console.log(`[Seedance] Generation started: ${generationId}`);
-
-    const videoUrl = await pollSeedanceGeneration(generationId);
-
-    // Cost estimation (Seedance: ~$0.02/second - cheapest)
-    const costPerSecond = 0.02;
-    const cost = Math.min(request.duration || 3, 5) * costPerSecond;
-
-    trackCost({
-      apiName: 'seedance',
-      userId: request.userId,
-      projectId: request.projectId,
-      sceneId: request.sceneId,
-      creditsUsed: cost,
-      generationId,
-      prompt: request.prompt,
+    const response = await axios.post(`${cfg.baseUrl}/generate`, payload, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
     });
 
-    return {
-      videoUrl,
-      generationId,
-      apiUsed: 'seedance',
-      cost,
-      duration: Math.min(request.duration || 3, 5),
-    };
-  }, DEFAULT_RETRY_CONFIG, classifyError);
+    const generationId = response.data.generation_id || response.data.id;
+    const videoUrl = await pollSeedanceGeneration(generationId, apiKey);
+
+    const cost = Math.min(request.duration || 3, 5) * cfg.costPerSecond;
+    markKeySuccess('seedance', apiKey, cost);
+
+    trackCost({
+      apiName: 'seedance', userId: request.userId, projectId: request.projectId,
+      sceneId: request.sceneId, creditsUsed: cost, generationId, prompt: request.prompt,
+    });
+
+    return { videoUrl, generationId, apiUsed: 'seedance', cost, duration: Math.min(request.duration || 3, 5) };
+  }, DEFAULT_RETRY_CONFIG, (error) => {
+    const classification = classifyError(error);
+    if (classification === 'fatal') markKeyFailed('seedance', apiKey, `Fatal: ${error.message}`);
+    else if (error.response?.status === 429) markKeyRateLimited('seedance', apiKey);
+    return classification;
+  });
 }
 
-async function pollSeedanceGeneration(generationId: string, maxAttempts = 30): Promise<string> {
+async function pollSeedanceGeneration(generationId: string, apiKey: string, maxAttempts = 30): Promise<string> {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 10000));
-
-    const statusRes = await axios.get(
-      `${SEEDANCE_BASE_URL}/status/${generationId}`,
-      { headers: { 'Authorization': `Bearer ${SEEDANCE_API_KEY}` } }
-    );
-
+    const statusRes = await axios.get(`${API_CONFIG.seedance.baseUrl}/status/${generationId}`, {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
     const state = statusRes.data.status || statusRes.data.state;
-
     if (state === 'completed' || state === 'done') {
       const videoUrl = statusRes.data.video_url || statusRes.data.output_url;
-      if (!videoUrl) throw new Error('Seedance generation completed but no video URL returned');
-      console.log(`[Seedance] Generation ${generationId} completed`);
+      if (!videoUrl) throw new Error('Seedance generation completed but no video URL');
       return videoUrl;
     }
-
     if (state === 'failed' || state === 'error') {
-      throw new Error(`Seedance generation failed: ${statusRes.data.error || 'Unknown error'}`);
+      throw new Error(`Seedance generation failed: ${statusRes.data.error || 'Unknown'}`);
     }
-
-    console.log(`[Seedance] Polling ${generationId} - attempt ${attempt + 1}/${maxAttempts} - state: ${state}`);
   }
-
-  throw new Error('Seedance generation timed out after 5 minutes');
+  throw new Error('Seedance generation timed out');
 }
 
-// ---- Luma Dream Machine (legacy, kept for backward compat) ----
+async function generateLuma(request: VideoGenRequest): Promise<VideoGenResponse> {
+  const apiKey = getApiKey('luma');
+  const cfg = API_CONFIG.luma;
 
-const LUMA_API_KEY = process.env.LUMA_API_KEY || '';
-
-export async function generateVideoLuma(request: VideoGenRequest): Promise<VideoGenResponse> {
-  console.log(`[Luma] Generating video with prompt: "${request.prompt.substring(0, 80)}..."`);
+  console.log(`[Luma] Generating with key...`);
 
   return withRetry(async () => {
-    const response = await axios.post(
-      'https://api.lumalabs.ai/dream-machine/v1/generations',
-      {
-        prompt: request.prompt,
-        aspect_ratio: request.aspectRatio || '16:9',
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${LUMA_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      }
-    );
+    const response = await axios.post(`${cfg.baseUrl}/generations`, {
+      prompt: request.prompt,
+      aspect_ratio: request.aspectRatio || '16:9',
+    }, {
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
 
     const generationId = response.data.id;
-    console.log(`[Luma] Generation started: ${generationId}`);
-
     let videoUrl: string | null = null;
+
     for (let attempt = 0; attempt < 30; attempt++) {
       await new Promise(resolve => setTimeout(resolve, 10000));
-      const statusRes = await axios.get(
-        `https://api.lumalabs.ai/dream-machine/v1/generations/${generationId}`,
-        { headers: { 'Authorization': `Bearer ${LUMA_API_KEY}` } }
-      );
+      const statusRes = await axios.get(`${cfg.baseUrl}/generations/${generationId}`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+      });
       if (statusRes.data.state === 'completed') {
         videoUrl = statusRes.data.assets?.video;
         break;
@@ -453,41 +329,85 @@ export async function generateVideoLuma(request: VideoGenRequest): Promise<Video
 
     if (!videoUrl) throw new Error('Luma generation timed out');
 
-    const cost = (request.duration || 5) * 0.03;
+    const cost = (request.duration || 5) * cfg.costPerSecond;
+    markKeySuccess('luma', apiKey, cost);
 
     trackCost({
-      apiName: 'luma',
-      userId: request.userId,
-      projectId: request.projectId,
-      sceneId: request.sceneId,
-      creditsUsed: cost,
-      generationId,
-      prompt: request.prompt,
+      apiName: 'luma', userId: request.userId, projectId: request.projectId,
+      sceneId: request.sceneId, creditsUsed: cost, generationId, prompt: request.prompt,
     });
 
-    return {
-      videoUrl,
-      generationId,
-      apiUsed: 'luma',
-      cost,
-      duration: request.duration || 5,
-    };
-  }, DEFAULT_RETRY_CONFIG, classifyError);
+    return { videoUrl, generationId, apiUsed: 'luma', cost, duration: request.duration || 5 };
+  }, DEFAULT_RETRY_CONFIG, (error) => {
+    const classification = classifyError(error);
+    if (classification === 'fatal') markKeyFailed('luma', apiKey, `Fatal: ${error.message}`);
+    else if (error.response?.status === 429) markKeyRateLimited('luma', apiKey);
+    return classification;
+  });
 }
 
-// ---- Master Generator (routes to correct API) ----
+// ---- Master Generator with Failover ----
 
-const GENERATORS: Record<string, (req: VideoGenRequest) => Promise<VideoGenResponse>> = {
-  sora: generateVideoSora,
-  runway: generateVideoRunway,
-  seedance: generateVideoSeedance,
-  luma: generateVideoLuma,
+const GENERATORS: Record<ApiProvider, (req: VideoGenRequest) => Promise<VideoGenResponse>> = {
+  sora: generateSora,
+  runway: generateRunway,
+  seedance: generateSeedance,
+  luma: generateLuma,
 };
 
 /**
- * Generate video using the specified API
+ * Generate video using the specified API, with automatic cross-API failover.
+ * If the primary API fails, it automatically tries runways, then seedance, then luma.
  */
 export async function generateVideo(request: VideoGenRequest): Promise<VideoGenResponse> {
+  const startTime = Date.now();
+
+  const { result, failover, attempts } = await executeWithFailover(
+    request.apiName,
+    async (provider: ApiProvider) => {
+      const generator = GENERATORS[provider];
+      if (!generator) throw new Error(`Unknown API: ${provider}`);
+      return generator({ ...request, apiName: provider });
+    },
+    {
+      strategy: 'quality-first',
+      allowQualityDegradation: true,
+      onFailover: (from, to, reason) => {
+        console.warn(`[VideoGen] ⚠️ Failover: ${from} → ${to} (${reason})`);
+      },
+    }
+  );
+
+  if (!failover.success || !result) {
+    // Track failed cost for the primary API
+    trackFailedCost({
+      apiName: request.apiName,
+      userId: request.userId,
+      projectId: request.projectId,
+      sceneId: request.sceneId,
+      cost: 0,
+      creditsUsed: 0,
+      generationId: 'failed',
+      prompt: request.prompt,
+    });
+
+    throw new Error(`All APIs failed for prompt "${request.prompt.substring(0, 50)}...". Failover chain: ${failover.message}`);
+  }
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[VideoGen] ${failover.apiUsed} completed in ${(elapsed / 1000).toFixed(1)}s (cost: $${result.cost.toFixed(4)})`);
+
+  return {
+    ...result,
+    failover,
+  };
+}
+
+/**
+ * Generate video with a specific API (no failover — direct call)
+ * Used when you want to force a specific API
+ */
+export async function generateVideoDirect(request: VideoGenRequest): Promise<VideoGenResponse> {
   const generator = GENERATORS[request.apiName];
   if (!generator) {
     throw new Error(`Unknown API: ${request.apiName}. Supported: sora, runway, seedance, luma`);
@@ -497,8 +417,6 @@ export async function generateVideo(request: VideoGenRequest): Promise<VideoGenR
   const result = await generator(request);
   const elapsed = Date.now() - startTime;
 
-  console.log(`[VideoGen] ${request.apiName} generation completed in ${(elapsed / 1000).toFixed(1)}s`);
-  console.log(`[VideoGen] Cost: $${result.cost.toFixed(4)} | URL: ${result.videoUrl.substring(0, 60)}...`);
-
+  console.log(`[VideoGen] ${request.apiName} completed in ${(elapsed / 1000).toFixed(1)}s (cost: $${result.cost.toFixed(4)})`);
   return result;
 }

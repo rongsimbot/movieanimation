@@ -302,6 +302,39 @@ export async function parseScript(id: number) {
   });
 }
 
+export interface ScriptFileUploadResult {
+  message: string;
+  fileName: string;
+  wordCount: number;
+  suggestedTitle: string;
+  detectedGenre: string;
+  extractedText: string;
+}
+
+export async function uploadScriptFile(file: File): Promise<ApiResponse<ScriptFileUploadResult>> {
+  const token = getStoredToken();
+  const url = `${API_BASE_URL}/scripts/upload-file`;
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      body: formData,
+    });
+    const data = await response.json();
+    return {
+      ok: response.ok,
+      status: response.status,
+      data: response.ok ? data : undefined,
+      error: !response.ok ? data?.error : undefined,
+    };
+  } catch (err: any) {
+    return { ok: false, status: 0, error: err.message };
+  }
+}
+
 export async function getScriptBreakdown(id: number) {
   return apiRequest<ScriptBreakdown>(`/scripts/${id}/breakdown`);
 }
@@ -346,6 +379,12 @@ export async function assignImageToCharacter(characterId: number, assetId: numbe
   return apiRequest<{ message: string; character: Character }>(`/characters/${characterId}/assign-image`, {
     method: 'POST',
     body: JSON.stringify({ asset_id: assetId }),
+  });
+}
+
+export async function deleteCharacter(id: number) {
+  return apiRequest<{ message: string }>(`/characters/${id}`, {
+    method: 'DELETE',
   });
 }
 
@@ -430,8 +469,205 @@ export async function deleteAsset(id: number) {
   });
 }
 
+export async function updateAsset(id: number, data: {
+  asset_type?: string;
+  character_id?: number | null;
+  animation_id?: number | null;
+  metadata?: Record<string, any>;
+  file_name?: string;
+}) {
+  return apiRequest<{ message: string; asset: Asset }>(`/assets/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
 export function getAssetUrl(assetId: number): string {
   return `${API_BASE_URL}/assets/${assetId}/file`;
+}
+
+// ─── Phase 7: Timeline & Assembly Endpoints ─────────────────────
+
+export interface TimelineData {
+  id: number;
+  project_id: number;
+  animation_id: number | null;
+  name: string;
+  status: 'draft' | 'assembling' | 'completed' | 'failed';
+  total_duration_seconds: number;
+  output_path: string | null;
+  output_size_bytes: number | null;
+  output_resolution: string;
+  assembly_started_at: string | null;
+  assembly_completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimelineClipData {
+  id: number;
+  timeline_id: number;
+  scene_id: number | null;
+  clip_source: string | null;
+  clip_order: number;
+  label: string | null;
+  duration_seconds: number | null;
+  trim_start_seconds: number;
+  trim_end_seconds: number | null;
+  volume: number;
+  transition_type: 'cut' | 'fade' | 'dissolve' | 'wipe';
+  transition_duration_ms: number;
+  status: 'pending' | 'processing' | 'ready' | 'failed';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TimelineWithClips extends TimelineData {
+  clips: TimelineClipData[];
+}
+
+export interface AssemblyJobResult {
+  jobId: string;
+  timelineId: number;
+  status: string;
+  outputPath: string;
+  clipCount: number;
+  estimatedDuration: number;
+}
+
+export async function createTimeline(data: {
+  project_id: number;
+  name?: string;
+  animation_id?: number;
+  output_resolution?: string;
+}) {
+  return apiRequest<{ timeline: TimelineData }>('/timelines', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getTimelines(projectId: number) {
+  return apiRequest<{ timelines: TimelineData[] }>(`/timelines/project/${projectId}`);
+}
+
+export async function getTimeline(id: number) {
+  return apiRequest<{ timeline: TimelineWithClips }>(`/timelines/${id}`);
+}
+
+export async function deleteTimeline(id: number) {
+  return apiRequest<{ message: string }>(`/timelines/${id}`, { method: 'DELETE' });
+}
+
+export async function addClipToTimeline(timelineId: number, data: {
+  scene_id?: number;
+  clip_source?: string;
+  clip_order: number;
+  label?: string;
+  duration_seconds?: number;
+  transition_type?: string;
+  transition_duration_ms?: number;
+}) {
+  return apiRequest<{ clip: TimelineClipData }>(`/timelines/${timelineId}/clips`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateClip(timelineId: number, clipId: number, data: any) {
+  return apiRequest<{ clip: TimelineClipData }>(`/timelines/${timelineId}/clips/${clipId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function removeClip(timelineId: number, clipId: number) {
+  return apiRequest<{ message: string }>(`/timelines/${timelineId}/clips/${clipId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function reorderClips(timelineId: number, order: Array<{ id: number; clip_order: number }>) {
+  return apiRequest<{ clips: TimelineClipData[] }>(`/timelines/${timelineId}/clips/reorder`, {
+    method: 'PUT',
+    body: JSON.stringify({ order }),
+  });
+}
+
+export async function bulkSetClips(timelineId: number, clips: any[]) {
+  return apiRequest<{ clips: TimelineClipData[] }>(`/timelines/${timelineId}/clips/bulk`, {
+    method: 'PUT',
+    body: JSON.stringify({ clips }),
+  });
+}
+
+export async function startAssembly(timelineId: number) {
+  return apiRequest<AssemblyJobResult>(`/timelines/${timelineId}/assemble`, {
+    method: 'POST',
+  });
+}
+
+export async function getAssemblyStatus(timelineId: number) {
+  return apiRequest<{ timelineId: number; timelineStatus: string; latestLog: any }>(`/timelines/${timelineId}/assembly-status`);
+}
+
+// ─── Phase 11: Analytics ─────────────────────────────────────────
+
+export interface UsageStats {
+  totalUsers: number;
+  activeUsersToday: number;
+  activeUsersThisMonth: number;
+  totalProjects: number;
+  projectsCreatedToday: number;
+  totalVideoGenerations: number;
+  videoGenerationsToday: number;
+  totalApiCalls: number;
+  apiCallsToday: number;
+  averageSessionTime: number;
+}
+
+export interface CostMetrics {
+  totalSpent: number;
+  spentToday: number;
+  spentThisMonth: number;
+  byProvider: Record<string, number>;
+  byProject: Array<{ projectId: number; projectTitle: string; cost: number }>;
+  projectedMonthly: number;
+}
+
+export interface DAUTrend {
+  date: string;
+  count: number;
+}
+
+export async function getUsageStats() {
+  return apiRequest<UsageStats>('/analytics/usage');
+}
+
+export async function getCostMetrics() {
+  return apiRequest<CostMetrics>('/analytics/costs');
+}
+
+export async function getDAUTrend(days: number = 7) {
+  return apiRequest<DAUTrend[]>(`/analytics/dau?days=${days}`);
+}
+
+export async function getTopEndpoints(days: number = 7) {
+  return apiRequest<Array<{ endpoint: string; count: number }>>(`/analytics/endpoints?days=${days}`);
+}
+
+export async function trackPageView(page: string, referrer?: string) {
+  return apiRequest('/analytics/pageview', {
+    method: 'POST',
+    body: JSON.stringify({ page, referrer }),
+  });
+}
+
+export async function trackAnalyticsEvent(eventType: string, metadata?: any) {
+  return apiRequest('/analytics/track', {
+    method: 'POST',
+    body: JSON.stringify({ eventType, metadata }),
+  });
 }
 
 export { API_BASE_URL };

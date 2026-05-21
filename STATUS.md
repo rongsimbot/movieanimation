@@ -1,10 +1,10 @@
 # MovieAnimation Project Status
 
-**Status:** 🟢 ACTIVE — Phase 3 Complete ✅
+**Status:** 🟢 ACTIVE — Phase 11: Beta Testing (IN PROGRESS)
 **Start Date:** 2026-03-20
 **Project Lead:** Synclair Gaines
-**Last Updated:** 2026-05-20 23:30 UTC
-**Current Phase:** Phase 3 — Script & Asset Management (COMPLETED)
+**Last Updated:** 2026-05-21 06:30 UTC
+**Current Phase:** Phase 11 — Beta Testing (IN PROGRESS)
 
 ---
 
@@ -74,9 +74,9 @@ AI-powered movie creation platform where users can:
 
 ---
 
-## ✅ Phase 6: Video Generation Integration (COMPLETED)
+## ✅ Phase 6: Video Generation Integration (COMPLETED — Updated 2026-05-21)
 
-- [x] Integrated sora-video-manager into backend (videoGenerator.ts)
+- [x] Integrated sora-video-manager into backend (videoGenerator.ts with key rotation)
 - [x] Integrated runway-video-manager into backend
 - [x] Integrated seedance-video-manager into backend
 - [x] Implemented smart API router (quality vs cost optimization)
@@ -86,14 +86,20 @@ AI-powered movie creation platform where users can:
 - [x] Real-time progress tracking (SSE via progressService.ts)
 - [x] Cost tracking per generation (costTracker.ts with budget alerts)
 - [x] Error handling with retry logic (exponential backoff + jitter)
+- [x] **API Key Rotation/Management** (keyManager.ts — multi-key pools, least-used/round-robin/weighted rotation, rate-limit awareness, auto-quarantine)
+- [x] **Cross-API Failover** (apiFailover.ts — circuit breaker, Sora→Runway→Seedance→Luma chain, quality degradation tracking)
+- [x] **Webhook Manager** (webhookManager.ts — registration, HMAC signatures, exponential retry, delivery tracking)
 
 ### Phase 6 Files:
-- `backend/src/services/videoGenerator.ts` - Multi-API integration
-- `backend/src/services/apiRouter.ts` - Smart router
+- `backend/src/services/videoGenerator.ts` - Multi-API integration with failover + key rotation
+- `backend/src/services/apiRouter.ts` - Smart API router
 - `backend/src/services/promptEngineer.ts` - Scene parsing, prompt enhancement
 - `backend/src/services/costTracker.ts` - Cost tracking with budgets
 - `backend/src/services/progressService.ts` - Real-time SSE progress
-- `backend/src/index.ts` - Server with all routes
+- `backend/src/services/keyManager.ts` - API key pools, rotation, quarantine (**NEW**)
+- `backend/src/services/apiFailover.ts` - Circuit breaker + cross-API failover (**NEW**)
+- `backend/src/services/webhookManager.ts` - Webhook registration/delivery (**NEW**)
+- `backend/src/index.ts` - Server with all routes (v1.1.0)
 
 ---
 
@@ -149,21 +155,158 @@ AI-powered movie creation platform where users can:
 - ✅ Frontend: Next.js builds successfully (`npx next build`)
 - ⚠️ Redis not running locally (BullMQ queues will auto-reconnect when Redis is available)
 
+## ✅ Phase 7: Video Assembly (COMPLETED 2026-05-21)
+
+**Trello Card:** [sim-development] Phase 7: Video Assembly (id: 69bd88c80b14096e09b57a9e)
+
+### FFmpeg Integration for Clip Stitching
+- [x] Complete rewrite of `videoAssembly.ts` with transition support
+- [x] Two assembly strategies: concat demuxer (cuts) + filter_complex (transitions)
+- [x] Resolution normalization (scale+pad to uniform size)
+- [x] Clip probing utilities (duration, resolution detection)
+- [x] Progress callbacks for real-time tracking
+- [x] Audio stream handling (mix from clips or overlay external track)
+
+### Backend: Timeline & Sequencing
+- [x] Database tables: `timelines`, `timeline_clips`, `assembly_logs` (migration 007)
+- [x] Timeline model (`timelineModel.ts`): CRUD for timelines + clips
+- [x] Timeline controller (`timelineController.ts`): REST endpoints with validation
+- [x] Timeline routes: 11 authenticated endpoints
+  - Timeline CRUD: POST, GET, DELETE
+  - Clip management: add, update, remove, reorder, bulk set
+  - Assembly: start, status check
+- [x] Enhanced assembly queue with: progress tracking, DB log updates, timeline status sync
+- [x] Server v1.2.0 with Phase 7 feature flags
+
+### Frontend: Timeline Editor UI
+- [x] Full drag-and-drop clip reordering
+- [x] Multiple timeline support per project (CRUD)
+- [x] Scene-to-clip addition panel (from script breakdown)
+- [x] Per-clip transition selector: Cut, Fade (to black), Dissolve (crossfade)
+- [x] Transition duration slider (100ms–2000ms) for fade/dissolve
+- [x] Assembly trigger button with live status polling
+- [x] Success/failure/assembling status banners
+- [x] Integrated with existing project tab navigation
+
+### Transition Support
+- [x] **Cut** — Instant switch (fastest, uses concat demuxer)
+- [x] **Fade** — Fade to black between clips (filter_complex xfade)
+- [x] **Dissolve** — Smooth cross-fade blend (filter_complex xfade)
+- [x] Configurable duration per transition
+
+### Phase 7 Files:
+- `backend/src/migrations/007_timeline_tables.sql` — New DB tables
+- `backend/src/models/timelineModel.ts` — Timeline + clip CRUD operations
+- `backend/src/controllers/timelineController.ts` — REST endpoint handlers
+- `backend/src/routes/timelineRoutes.ts` — 11 API routes
+- `backend/src/services/videoAssembly.ts` — FFmpeg engine (rewritten)
+- `backend/src/queue/assemblyQueue.ts` — Enhanced job queue
+- `backend/src/index.ts` — Updated to v1.2.0 with timeline routes
+- `frontend/src/app/project/[id]/timeline/page.tsx` — Full drag-drop editor
+- `frontend/src/lib/api.ts` — 11 new API functions
+
+### API Endpoints (Phase 7):
+- `POST   /api/timelines` — Create timeline
+- `GET    /api/timelines/project/:projectId` — List timelines
+- `GET    /api/timelines/:id` — Get timeline with clips
+- `DELETE /api/timelines/:id` — Delete timeline
+- `POST   /api/timelines/:id/clips` — Add clip
+- `PUT    /api/timelines/:id/clips/:clipId` — Update clip
+- `DELETE /api/timelines/:id/clips/:clipId` — Remove clip
+- `PUT    /api/timelines/:id/clips/reorder` — Reorder clips
+- `PUT    /api/timelines/:id/clips/bulk` — Bulk set clips
+- `POST   /api/timelines/:id/assemble` — Start assembly
+- `GET    /api/timelines/:id/assembly-status` — Assembly progress
+
+### Build Status
+- ✅ Backend: TypeScript compiles clean
+- ✅ Frontend: Next.js builds successfully
+
+## 🧪 Phase 11: Beta Testing (IN PROGRESS — Updated 2026-05-21)
+
+### Performance Optimization ✅
+- [x] Response compression (gzip/deflate via `compression` middleware)
+- [x] In-memory API response caching (TTL-based with auto-cleanup)
+- [x] Cache hit/miss statistics endpoint
+
+### Security Enhancements ✅
+- [x] Helmet security headers (XSS, HSTS, no-sniff, etc.)
+- [x] Rate limiting (token bucket: general 60/min, auth 10/min, upload 20/min, gen 5/min)
+- [x] Tightened CORS (origin-specific, credentialed, preflight caching)
+- [x] Request ID tracking for debugging
+
+### Error Handling Improvements ✅
+- [x] Structured error codes (VALIDATION, AUTH, NOT_FOUND, RATE_LIMIT, etc.)
+- [x] Custom error classes (AppError, ValidationError, AuthenticationError, etc.)
+- [x] Async handler wrapper for route error catching
+- [x] Production-safe error messages (no stack traces leak)
+- [x] Standardized error response format with requestId
+
+### Analytics Integration ✅
+- [x] `analytics_events` table with proper indexes
+- [x] Event tracking (page views, API calls, custom events)
+- [x] Usage statistics endpoint (DAU, MAU, total users, projects, generations)
+- [x] DAU trend endpoint (configurable day range)
+- [x] Top endpoints tracking
+- [x] Frontend analytics API client functions
+
+### Cost Monitoring Dashboard ✅
+- [x] Total spent / Today / This Month / Projected Monthly
+- [x] Cost breakdown by API provider (with visual bars)
+- [x] Cost by project (top 5)
+- [x] Daily Active Users trend chart
+- [x] Platform usage stats (users, generations, API calls)
+- [x] Full `/dashboard/costs` page with responsive design
+
+### User Documentation ✅
+- [x] Help Center page (`/help`) with:
+  - Quick Start Guide (4-step walkthrough)
+  - How-To Guides (Getting Started, Script Writing, Assets, Exporting)
+  - Video Tutorials placeholder section (6 tutorial topics)
+  - FAQ section (8 common questions)
+  - Contact Support section
+
+### Phase 11 Files Created:
+- `backend/src/services/cacheService.ts` — TTL-based in-memory cache
+- `backend/src/middleware/errorHandler.ts` — Enhanced error handling middleware
+- `backend/src/middleware/rateLimiter.ts` — Token-bucket rate limiter
+- `backend/src/services/analyticsService.ts` — Usage & cost analytics
+- `backend/src/controllers/analyticsController.ts` — Analytics endpoints
+- `backend/src/routes/analyticsRoutes.ts` — Analytics API routes
+- `backend/src/index.ts` — Updated to v1.3.0 with Phase 11 features
+- `frontend/src/app/dashboard/costs/page.tsx` — Cost monitoring dashboard
+- `frontend/src/app/help/page.tsx` — Help center with guides & FAQ
+- `frontend/src/lib/api.ts` — Added analytics API functions
+
+### API Endpoints (Phase 11):
+- `POST /api/analytics/track` — Track custom event
+- `POST /api/analytics/pageview` — Track page view
+- `GET  /api/analytics/usage` — Usage statistics
+- `GET  /api/analytics/costs` — Cost metrics
+- `GET  /api/analytics/dau` — DAU trend
+- `GET  /api/analytics/endpoints` — Top endpoints
+- `GET  /api/analytics/cache` — Cache stats
+
+### Still Needed for Beta Launch:
+- [ ] Video tutorials (actual video content)
+- [ ] Beta tester onboarding (5-10 users)
+- [ ] Bug fixes from beta feedback
+- [ ] Load testing (concurrent users)
+- [ ] Phase 8: Final Rendering (export pipeline completion)
+
+### Build Status
+- ✅ Backend: TypeScript compiles clean
+- ✅ Frontend: Next.js builds successfully (10 routes)
+
 ## 📋 Upcoming Phases
 
-### Phase 4: AI Video Generation Core
-- Multi-API integration
-- Smart router implementation
-- Job queue for async generation
-- Character face injection
+### Phase 8: Export & Distribution
+- Final render pipeline
+- Resolution options (720p, 1080p, 4K)
+- Export formats (MP4, MOV, WebM)
+- Download links & sharing
 
-### Phase 5: Video Assembly
-- FFmpeg clip stitching
-- Timeline editor
-- Transitions & effects
-- Audio sync
-
-### Phase 7: Polish & Beta Launch
+### Phase 9: Polish & Beta Launch
 - Performance optimization
 - User testing
 - Documentation
@@ -192,5 +335,5 @@ AI-powered movie creation platform where users can:
 ## 📊 Database
 
 **Database:** `movieanimation` on RTX 3060 (PostgreSQL via SSH tunnel)
-**Tables:** users, scripts, scenes, characters, scene_characters, animations, animation_characters, chapters
+**Tables:** users, scripts, scenes, characters, scene_characters, animations, animation_characters, chapters, timelines, timeline_clips, assembly_logs
 **Users:** 2 (Ronnie, rongg)

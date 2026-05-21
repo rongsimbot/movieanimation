@@ -11,6 +11,9 @@ import { routeScene, routeBatchScenes, SceneProfile, BudgetConstraints } from '.
 import { engineerPrompt, parseScriptToScenes, engineerBatchPrompts, ScriptScene, CharacterProfile } from '../services/promptEngineer';
 import { getUsageSummary, getRecentEntries, exportCostCsv, setBudget } from '../services/costTracker';
 import { progressService } from '../services/progressService';
+import { getPoolStats, addApiKey, removeApiKey, setRotationStrategy, ApiProvider } from '../services/keyManager';
+import { getFailoverHealth, getFailoverConfig, setFailoverConfig, resetCircuit, getCircuitStates } from '../services/apiFailover';
+import { registerWebhook, unregisterWebhook, updateWebhook, getRegistrations, getDeliveryHistory, getDeliveryStats, retryFailedDeliveries } from '../services/webhookManager';
 
 const router = Router();
 
@@ -384,13 +387,18 @@ router.get('/costs/estimate', async (req: Request, res: Response) => {
 
 router.post('/assemble', async (req: Request, res: Response) => {
   try {
-    const { userId, scenes, audioPath, outputPath } = req.body;
-    if (!scenes || !Array.isArray(scenes) || scenes.length === 0) {
-      return res.status(400).json({ error: 'An array of scenes is required' });
+    const { userId, clips, audioPath, outputPath, resolution } = req.body;
+    if (!clips || !Array.isArray(clips) || clips.length === 0) {
+      return res.status(400).json({ error: 'An array of clips is required' });
     }
     if (!outputPath) return res.status(400).json({ error: 'Output path is required' });
 
-    const job = await addAssemblyJob(userId || 'anonymous', { scenes, audioPath, outputPath });
+    const job = await addAssemblyJob(userId || 'anonymous', {
+      clips,
+      audioPath,
+      outputPath,
+      resolution: resolution || '1080p',
+    });
     res.json({ jobId: job.id, status: 'queued' });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to queue assembly job', details: error.message });
@@ -460,6 +468,264 @@ router.get('/export/status/:id', async (req: Request, res: Response) => {
 router.get('/apis', async (_req: Request, res: Response) => {
   const { getAllApiProfiles } = require('../services/apiRouter');
   res.json(getAllApiProfiles());
+});
+
+// ═══════════════════════════════════════════
+//  API KEY MANAGEMENT (Phase 6)
+// ═══════════════════════════════════════════
+
+/**
+ * GET /videos/keys
+ * Get API key pool statistics
+ */
+router.get('/keys', async (req: Request, res: Response) => {
+  try {
+    const provider = req.query.provider as ApiProvider | undefined;
+    const stats = getPoolStats(provider);
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get key stats', details: error.message });
+  }
+});
+
+/**
+ * POST /videos/keys
+ * Add a new API key at runtime
+ */
+router.post('/keys', async (req: Request, res: Response) => {
+  try {
+    const { provider, key, label } = req.body;
+    if (!provider || !key) {
+      return res.status(400).json({ error: 'provider and key are required' });
+    }
+    const validProviders: ApiProvider[] = ['sora', 'runway', 'seedance', 'luma'];
+    if (!validProviders.includes(provider)) {
+      return res.status(400).json({ error: `Invalid provider. Must be one of: ${validProviders.join(', ')}` });
+    }
+    const entry = addApiKey(provider, key, label);
+    res.json({
+      success: true,
+      message: `Added ${provider} key: ${entry.label}`,
+      keyId: entry.id,
+      provider: entry.provider,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to add API key', details: error.message });
+  }
+});
+
+/**
+ * DELETE /videos/keys/:id
+ * Remove an API key by ID
+ */
+router.delete('/keys/:id', async (req: Request, res: Response) => {
+  try {
+    const removed = removeApiKey(req.params.id);
+    if (!removed) {
+      return res.status(404).json({ error: 'Key not found' });
+    }
+    res.json({ success: true, message: `Key ${req.params.id} removed` });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to remove API key', details: error.message });
+  }
+});
+
+/**
+ * PUT /videos/keys/rotation
+ * Set the key rotation strategy
+ */
+router.put('/keys/rotation', async (req: Request, res: Response) => {
+  try {
+    const { strategy } = req.body;
+    const validStrategies = ['round-robin', 'least-used', 'weighted'];
+    if (!validStrategies.includes(strategy)) {
+      return res.status(400).json({ error: `Invalid strategy. Must be one of: ${validStrategies.join(', ')}` });
+    }
+    setRotationStrategy({ name: strategy });
+    res.json({ success: true, strategy });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to set rotation strategy', details: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════
+//  FAILOVER MANAGEMENT (Phase 6)
+// ═══════════════════════════════════════════
+
+/**
+ * GET /videos/failover/health
+ * Get failover health status (circuit breakers)
+ */
+router.get('/failover/health', async (_req: Request, res: Response) => {
+  try {
+    const health = getFailoverHealth();
+    res.json(health);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get failover health', details: error.message });
+  }
+});
+
+/**
+ * GET /videos/failover/circuits
+ * Get all circuit breaker states
+ */
+router.get('/failover/circuits', async (_req: Request, res: Response) => {
+  try {
+    const states = getCircuitStates();
+    res.json(states);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get circuit states', details: error.message });
+  }
+});
+
+/**
+ * POST /videos/failover/circuits/:provider/reset
+ * Manually reset a circuit breaker
+ */
+router.post('/failover/circuits/:provider/reset', async (req: Request, res: Response) => {
+  try {
+    const provider = req.params.provider as ApiProvider;
+    const validProviders: ApiProvider[] = ['sora', 'runway', 'seedance', 'luma'];
+    if (!validProviders.includes(provider)) {
+      return res.status(400).json({ error: `Invalid provider: ${provider}` });
+    }
+    resetCircuit(provider);
+    res.json({ success: true, message: `${provider} circuit reset to closed` });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to reset circuit', details: error.message });
+  }
+});
+
+/**
+ * GET /videos/failover/config
+ * Get failover configuration
+ */
+router.get('/failover/config', async (_req: Request, res: Response) => {
+  try {
+    const config = getFailoverConfig();
+    res.json(config);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get failover config', details: error.message });
+  }
+});
+
+/**
+ * PUT /videos/failover/config
+ * Update failover configuration
+ */
+router.put('/failover/config', async (req: Request, res: Response) => {
+  try {
+    setFailoverConfig(req.body);
+    res.json({ success: true, config: getFailoverConfig() });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update failover config', details: error.message });
+  }
+});
+
+// ═══════════════════════════════════════════
+//  WEBHOOK MANAGEMENT (Phase 6)
+// ═══════════════════════════════════════════
+
+/**
+ * GET /videos/webhooks
+ * Get registered webhooks (optionally filtered)
+ */
+router.get('/webhooks', async (req: Request, res: Response) => {
+  try {
+    const { userId, projectId, event } = req.query;
+    const webhooks = getRegistrations({
+      userId: userId as string,
+      projectId: projectId as string,
+      event: event as any,
+    });
+    res.json(webhooks);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get webhooks', details: error.message });
+  }
+});
+
+/**
+ * POST /videos/webhooks
+ * Register a new webhook
+ */
+router.post('/webhooks', async (req: Request, res: Response) => {
+  try {
+    const { userId, projectId, url, secret, events } = req.body;
+    if (!url) return res.status(400).json({ error: 'url is required' });
+
+    const webhook = registerWebhook({ userId, projectId, url, secret, events });
+    res.status(201).json(webhook);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to register webhook', details: error.message });
+  }
+});
+
+/**
+ * PUT /videos/webhooks/:id
+ * Update a webhook registration
+ */
+router.put('/webhooks/:id', async (req: Request, res: Response) => {
+  try {
+    const webhook = updateWebhook(req.params.id, req.body);
+    if (!webhook) return res.status(404).json({ error: 'Webhook not found' });
+    res.json(webhook);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to update webhook', details: error.message });
+  }
+});
+
+/**
+ * DELETE /videos/webhooks/:id
+ * Unregister a webhook
+ */
+router.delete('/webhooks/:id', async (req: Request, res: Response) => {
+  try {
+    const removed = unregisterWebhook(req.params.id);
+    if (!removed) return res.status(404).json({ error: 'Webhook not found' });
+    res.json({ success: true, message: `Webhook ${req.params.id} removed` });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to remove webhook', details: error.message });
+  }
+});
+
+/**
+ * GET /videos/webhooks/:id/deliveries
+ * Get delivery history for a webhook
+ */
+router.get('/webhooks/:id/deliveries', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    const history = getDeliveryHistory(req.params.id, limit);
+    res.json(history);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get delivery history', details: error.message });
+  }
+});
+
+/**
+ * GET /videos/webhooks/stats
+ * Get webhook delivery statistics
+ */
+router.get('/webhooks/stats', async (_req: Request, res: Response) => {
+  try {
+    const stats = getDeliveryStats();
+    res.json(stats);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to get webhook stats', details: error.message });
+  }
+});
+
+/**
+ * POST /videos/webhooks/retry-failed
+ * Retry all failed webhook deliveries
+ */
+router.post('/webhooks/retry-failed', async (_req: Request, res: Response) => {
+  try {
+    const count = await retryFailedDeliveries();
+    res.json({ success: true, retried: count });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to retry deliveries', details: error.message });
+  }
 });
 
 export default router;

@@ -19,6 +19,9 @@ router.get('/:id', scriptController.getScript);
 router.put('/:id', scriptController.updateScript);
 router.delete('/:id', scriptController.deleteScript);
 
+// Script file upload (text extraction)
+router.post('/upload-file', scriptController.uploadScriptFile);
+
 // Script parsing & breakdown
 router.post('/:id/parse', scriptController.parseScript);
 router.get('/:id/breakdown', scriptController.getScriptBreakdown);
