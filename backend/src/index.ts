@@ -3,6 +3,7 @@
  * Phase 2: User Authentication (COMPLETED)
  * Phase 6: Full API integration with Sora, Runway, Seedance
  * Phase 7: Video Assembly (COMPLETED)
+ * Phase 8: Final Rendering & Export Pipeline (COMPLETED)
  * Phase 11: Beta Testing — Analytics, Security, Performance
  */
 
@@ -19,6 +20,8 @@ import characterRoutes from './routes/characterRoutes';
 import assetRoutes from './routes/assetRoutes';
 import timelineRoutes from './routes/timelineRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
+import exportRoutes from './routes/exportRoutes';
+import previewRoutes from './routes/previewRoutes'; // Phase 5
 import { testConnection, closePool } from './config/database';
 import { closeQueues } from './queue/videoQueue';
 import { getFailoverHealth } from './services/apiFailover';
@@ -27,6 +30,7 @@ import { getWebhookHealth } from './services/webhookManager';
 import { ensureAnalyticsTable } from './services/analyticsService';
 import { requestIdMiddleware, globalErrorHandler, notFoundHandler } from './middleware/errorHandler';
 import { rateLimiter, authRateLimiter, uploadRateLimiter, generationRateLimiter } from './middleware/rateLimiter';
+import { etagMiddleware, staticCacheHeaders } from './middleware/cacheMiddleware';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -61,6 +65,23 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // General rate limit for all /api routes
 app.use('/api', rateLimiter());
 
+// Static asset caching headers (Phase 7: Polish)
+app.use('/uploads', express.static('uploads', { setHeaders: (res, path) => {
+  const ext = path.toLowerCase();
+  if (/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(ext)) {
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+  } else if (/\.(mp4|webm|mov)$/i.test(ext)) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+  } else if (/\.(pdf|docx?|txt)$/i.test(ext)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+  }
+}}));
+app.use('/previews', staticCacheHeaders, express.static('previews'));
+app.use('/thumbnails', staticCacheHeaders, express.static('thumbnails'));
+
+// ETag middleware for read-heavy API routes (Phase 7: Polish)
+app.use(['/api/analytics', '/api/scripts', '/api/characters', '/api/assets'], etagMiddleware({ maxAge: 30 }));
+
 // Request logging in development
 if (process.env.NODE_ENV === 'development') {
   app.use((req, _res, next) => {
@@ -81,6 +102,8 @@ app.use('/api/characters', characterRoutes);
 app.use('/api/assets', uploadRateLimiter, assetRoutes);
 app.use('/api/timelines', timelineRoutes);
 app.use('/api/analytics', analyticsRoutes); // Phase 11
+app.use('/api/exports', exportRoutes); // Phase 8
+app.use('/api/preview', previewRoutes); // Phase 5: Video preview generation
 
 // ─── Health Check ──────────────────────────────────────────────
 
@@ -93,8 +116,8 @@ app.get('/api/health', async (_req, res) => {
   res.json({
     status: dbConnected ? 'ok' : 'degraded',
     service: 'movieanimation-backend',
-    version: '1.3.0',
-    phase: 11,
+    version: '1.7.0',
+    phase: 7,  // Phase 7: Polish
     features: [
       // Phase 2
       'user-registration',
@@ -137,6 +160,31 @@ app.get('/api/health', async (_req, res) => {
       'cost-monitoring',
       'dau-trends',
       'api-caching',
+      // Phase 7 (Polish)
+      'etag-conditional-requests',
+      'static-asset-caching',
+      'cdn-cache-headers',
+      'enhanced-dashboard',
+      'cost-tracking-ui',
+      'frontend-error-boundary',
+      'toast-notifications',
+      'loading-skeletons',
+      'refined-ui-ux',
+      // Phase 5
+      'video-preview-generation',
+      'low-res-proxy-videos',
+      'clip-thumbnails',
+      'contact-sheets',
+      'frame-strip-extraction',
+      'scene-clip-management',
+      // Phase 8
+      'final-rendering-pipeline',
+      'ffmpeg-export-engine',
+      'multi-resolution-export',
+      'multi-format-export',
+      'shareable-download-links',
+      'password-protected-sharing',
+      'export-queue-management',
     ],
     database: dbConnected ? 'connected' : 'disconnected',
     apis: {
@@ -162,17 +210,22 @@ app.use(globalErrorHandler);
 // ─── Start Server ──────────────────────────────────────────────
 
 const server = app.listen(PORT, async () => {
-  console.log(`\n🎬 MovieAnimation Backend v1.3.0`);
+  console.log(`\n🎬 MovieAnimation Backend v1.7.0`);
   console.log(`🔐 Phase 2: Authentication — READY`);
+  console.log(`🎞️  Phase 5: Video Previews — READY`);
   console.log(`🎥 Phase 6: Video Generation — READY`);
-  console.log(`✂️  Phase 7: Video Assembly — READY`);
+  console.log(`✂️  Phase 7: Video Assembly + Polish — READY`);
+  console.log(`📦 Phase 8: Export Pipeline — READY`);
   console.log(`🚀 Phase 11: Beta Testing — READY`);
   console.log(`\n🛡️  Security: Helmet + Rate Limiting + CORS`);
   console.log(`📊 Analytics: Usage tracking + Cost monitoring`);
-  console.log(`⚡ Performance: Compression + Response caching`);
+  console.log(`⚡ Performance: ETags + Response caching + Static asset caching`);
+  console.log(`🎨 UI: Enhanced dashboard + Cost tracking + Error boundaries`);
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api`);
   console.log(`📊 Analytics: http://localhost:${PORT}/api/analytics`);
+  console.log(`🎞️  Previews: http://localhost:${PORT}/api/preview`);
+  console.log(`📦 Exports: http://localhost:${PORT}/api/exports`);
   console.log(`\n`);
 
   // Initialize analytics table
