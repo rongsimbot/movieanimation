@@ -12,7 +12,7 @@ const poolConfig: PoolConfig = {
   host: process.env.DATABASE_HOST || 'localhost',
   port: parseInt(process.env.DATABASE_PORT || '5432', 10),
   user: process.env.DATABASE_USER || 'sim_admin',
-  password: process.env.DATABASE_PASSWORD || 'SimData_Vector_2026!',
+  password: process.env.DATABASE_PASSWORD || '',
   database: process.env.DATABASE_NAME || 'movieanimation',
   max: 20,
   idleTimeoutMillis: 30000,

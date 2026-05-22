@@ -24,6 +24,7 @@ import exportRoutes from './routes/exportRoutes';
 import previewRoutes from './routes/previewRoutes'; // Phase 5
 import { testConnection, closePool } from './config/database';
 import { closeQueues } from './queue/videoQueue';
+import { closeExportQueue } from './queue/exportQueue';
 import { getFailoverHealth } from './services/apiFailover';
 import { getPoolStats } from './services/keyManager';
 import { getWebhookHealth } from './services/webhookManager';
@@ -37,9 +38,24 @@ const PORT = process.env.PORT || 3001;
 
 // ─── Phase 11: Security & Performance Middleware ─────────────────
 
-// Helmet security headers (XSS protection, HSTS, no sniff, etc.)
+// Helmet security headers (XSS protection, HSTS, no sniff, CSP, etc.)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin for asset serving
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],  // Next.js hydration requires inline
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'blob:'],
+      mediaSrc: ["'self'", 'blob:'],
+      connectSrc: ["'self'", process.env.FRONTEND_URL || 'http://localhost:3000'],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      formAction: ["'self'"],
+      upgradeInsecureRequests: [],
+    },
+  },
 }));
 
 // Response compression (gzip/deflate)
@@ -252,6 +268,7 @@ async function shutdown() {
   server.close();
   await closePool();
   await closeQueues();
+  await closeExportQueue();
   process.exit(0);
 }
 

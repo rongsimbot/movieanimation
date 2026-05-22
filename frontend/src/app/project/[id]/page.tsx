@@ -80,6 +80,7 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
             { label: "🎭 Characters", href: `/project/${projectId}/characters` },
             { label: "📁 Assets", href: `/project/${projectId}/assets` },
             { label: "⏱️ Timeline", href: `/project/${projectId}/timeline` },
+            { label: "📦 Export", href: `/project/${projectId}/export` },
           ].map((tab) => (
             <button
               key={tab.href}

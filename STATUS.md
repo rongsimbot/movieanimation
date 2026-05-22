@@ -3,8 +3,8 @@
 **Status:** 🟢 ACTIVE — Phase 11: Beta Testing (IN PROGRESS)
 **Start Date:** 2026-03-20
 **Project Lead:** Synclair Gaines
-**Last Updated:** 2026-05-21 06:30 UTC
-**Current Phase:** Phase 11 — Beta Testing (IN PROGRESS)
+**Last Updated:** 2026-05-21 17:20 UTC
+**Current Phase:** Phase 5: Video Assembly Pipeline (JUST COMPLETED)
 
 ---
 
@@ -71,6 +71,58 @@ AI-powered movie creation platform where users can:
 - ✅ Profile update
 - ✅ Account deletion
 - ✅ Deleted user cannot re-login
+
+---
+
+## ✅ Phase 5: Video Assembly Pipeline (COMPLETED 2026-05-21)
+
+**Trello Card:** https://trello.com/c/69bd7d42ee47f304a1da1140
+
+### Video Preview Generation System
+- [x] Low-res proxy video generation (240p/360p/480p/720p) for timeline scrubbing
+- [x] Thumbnail extraction at specified timestamps (JPG/PNG/WebP)
+- [x] Contact sheet generation (grid of frames via FFmpeg tile filter)
+- [x] Frame strip extraction for timeline hover preview (base64-encoded)
+- [x] Batch preview generation for all clips in a timeline
+- [x] Full preview generation (proxy + thumbnail + contact sheet)
+- [x] Video probe utility (duration, resolution, codec detection)
+
+### API Endpoints (Phase 5)
+- [x] `POST   /api/preview/clip/:clipId` — Generate low-res preview + thumbnail
+- [x] `GET    /api/preview/clip/:clipId` — Get preview info/status
+- [x] `GET    /api/preview/clip/:clipId/file` — Serve preview video file
+- [x] `GET    /api/preview/clip/:clipId/thumbnail` — Serve thumbnail image
+- [x] `GET    /api/preview/clip/:clipId/frames` — Extract frame strip
+- [x] `POST   /api/preview/clip/:clipId/contact-sheet` — Generate contact sheet
+- [x] `POST   /api/preview/timeline/:id` — Batch generate all timeline previews
+- [x] `GET    /api/preview/timeline/:id` — Get timeline preview status
+- [x] `GET    /api/preview/scene/:sceneId` — Get scene clips
+- [x] `POST   /api/preview/scene/:sceneId` — Generate scene clip previews
+- [x] `POST   /api/preview/scene/:sceneId/clips` — Add clip to scene
+- [x] `PUT    /api/preview/scene/clips/:clipId` — Update scene clip
+- [x] `DELETE /api/preview/scene/clips/:clipId` — Remove scene clip
+- [x] `POST   /api/preview/probe` — Probe video file metadata
+
+### Scene Clip Management
+- [x] `scene_clips` table — links scenes to generated/uploaded video clips
+- [x] `preview_jobs` table — tracks batch preview generation jobs
+- [x] CRUD operations for scene-to-clip mapping
+
+### Database
+- [x] Migration 010: `preview_path`, `thumbnail_path`, `preview_status` added to `timeline_clips`
+- [x] New tables: `scene_clips`, `preview_jobs` with proper indexes
+
+### Phase 5 Files
+- `backend/src/services/videoPreview.ts` — FFmpeg preview engine (proxy, thumbnails, contact sheets, frame strips)
+- `backend/src/controllers/previewController.ts` — 14 endpoint handlers
+- `backend/src/routes/previewRoutes.ts` — 15 authenticated routes
+- `backend/src/migrations/010_phase5_previews.sql` — DB schema changes
+- `backend/src/index.ts` — Updated to v1.5.0 with preview routes
+
+### Build Status
+- ✅ Backend: TypeScript compiles clean (0 errors)
+- ✅ Frontend: Next.js builds successfully (12 routes)
+- ✅ Migration: All tables and indexes created
 
 ---
 
@@ -292,11 +344,94 @@ AI-powered movie creation platform where users can:
 - [ ] Beta tester onboarding (5-10 users)
 - [ ] Bug fixes from beta feedback
 - [ ] Load testing (concurrent users)
-- [ ] Phase 8: Final Rendering (export pipeline completion)
+- [ ] Phase 9: Polish & Beta Launch
 
 ### Build Status
 - ✅ Backend: TypeScript compiles clean
 - ✅ Frontend: Next.js builds successfully (10 routes)
+
+## ✅ Phase 8: Final Rendering & Export Pipeline (COMPLETED 2026-05-21)
+
+**Trello Card:** New Phase 8
+
+### Backend: Export Engine & Share Links
+- [x] Full FFmpeg rendering engine with progress tracking (`videoExport.ts` rewrite)
+- [x] Resolution options: 720p, 1080p, 4K with aspect ratio preservation
+- [x] Export formats: MP4 (H.264/AAC), MOV (H.264/AAC), WebM (VP9/Opus)
+- [x] Quality presets: fast (smaller), medium (balanced), slow (best quality)
+- [x] Custom bitrate support
+- [x] Batch export (multiple resolutions/formats from one source)
+- [x] Video probing (duration, resolution, codec detection)
+- [x] Fast-start moov atom for streaming (MP4/MOV)
+- [x] Custom metadata injection
+
+### Backend: Export Management
+- [x] Database tables: `exports`, `export_logs`, `share_links` (migration 009)
+- [x] Export model (`exportModel.ts`): CRUD, stats, expiry, resolution/formats configs
+- [x] Export controller (`exportController.ts`): 11 endpoints
+- [x] Export routes (`exportRoutes.ts`): authenticated + public share routes
+- [x] BullMQ export queue with concurrency limiting (2 parallel, 5/min)
+- [x] DB-backed progress tracking with stage-level logs
+- [x] Auto-cleanup of expired exports (hourly)
+- [x] Download streaming with proper content headers
+
+### Backend: Sharing Capabilities
+- [x] Shareable links with unique URL tokens
+- [x] Optional password protection (bcrypt)
+- [x] Configurable download limits
+- [x] Configurable expiration (hours)
+- [x] Public share access endpoint (GET /api/exports/share/:token)
+- [x] Public share download endpoint (GET /api/exports/share/:token/download)
+- [x] Share link revocation
+- [x] Download counting per link and per export
+
+### Frontend: Export UI
+- [x] Full export page (`/project/[id]/export`) with responsive design
+- [x] Resolution selector (720p, 1080p, 4K) with dimensions display
+- [x] Format selector (MP4, MOV, WebM)
+- [x] Quality/speed slider (fast/medium/slow)
+- [x] Custom bitrate input
+- [x] Real-time progress bars with polling
+- [x] Export stats dashboard (total, completed, processing, storage)
+- [x] Export detail panel with full metadata
+- [x] One-click download button
+- [x] Share link generation with password/max-downloads/expiration controls
+- [x] Share link management (view, copy, revoke)
+- [x] Processing log viewer
+- [x] Auto-detects completed timeline for export source
+- [x] Export tab added to project navigation
+
+### API Endpoints (Phase 8):
+- `GET    /api/exports/options` — Available resolutions & formats (public)
+- `GET    /api/exports/share/:token` — Public share access (public)
+- `GET    /api/exports/share/:token/download` — Public download via share (public)
+- `POST   /api/exports` — Create new export job
+- `GET    /api/exports` — List user's exports
+- `GET    /api/exports/queue/status` — Queue stats
+- `GET    /api/exports/:id` — Export details + logs + shares
+- `GET    /api/exports/:id/download` — Download exported file
+- `DELETE /api/exports/:id` — Delete export
+- `POST   /api/exports/:id/share` — Create share link
+- `GET    /api/exports/:id/shares` — List share links
+- `DELETE /api/exports/:id/shares/:token` — Revoke share link
+
+### Phase 8 Files Created/Modified:
+- `backend/src/migrations/009_phase8_exports.sql` — DB schema (NEW)
+- `backend/src/models/exportModel.ts` — Export + Share Link CRUD (NEW)
+- `backend/src/controllers/exportController.ts` — 11 endpoint handlers (NEW)
+- `backend/src/routes/exportRoutes.ts` — API routes (NEW)
+- `backend/src/services/videoExport.ts` — FFmpeg rendering engine (REWRITTEN)
+- `backend/src/queue/exportQueue.ts` — BullMQ job queue (REWRITTEN)
+- `backend/src/index.ts` — Updated to v1.4.0 with Phase 8 features (MODIFIED)
+- `frontend/src/app/project/[id]/export/page.tsx` — Export UI page (NEW)
+- `frontend/src/app/project/[id]/page.tsx` — Added Export tab (MODIFIED)
+- `frontend/src/lib/api.ts` — Added 14 export/sharing API functions (MODIFIED)
+
+### Build Status
+- ✅ Backend: TypeScript compiles clean (0 Phase 8 errors)
+- ✅ Frontend: Next.js builds successfully (12 routes)
+
+---
 
 ## 📋 Upcoming Phases
 

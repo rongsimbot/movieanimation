@@ -14,6 +14,7 @@ import { progressService } from '../services/progressService';
 import { getPoolStats, addApiKey, removeApiKey, setRotationStrategy, ApiProvider } from '../services/keyManager';
 import { getFailoverHealth, getFailoverConfig, setFailoverConfig, resetCircuit, getCircuitStates } from '../services/apiFailover';
 import { registerWebhook, unregisterWebhook, updateWebhook, getRegistrations, getDeliveryHistory, getDeliveryStats, retryFailedDeliveries } from '../services/webhookManager';
+import pool from '../config/database';
 
 const router = Router();
 
@@ -433,8 +434,17 @@ router.post('/export', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'inputPath, outputPath, resolution, and format are required' });
     }
 
-    const job = await addExportJob(userId || 'anonymous', { inputPath, outputPath, resolution, format });
-    res.json({ jobId: job.id, status: 'queued' });
+    // Create a temporary export record to track this job
+    const exportResult = await pool.query(
+      `INSERT INTO exports (user_id, animation_id, output_path, resolution, format, status)
+       VALUES ($1, NULL, $2, $3, $4, 'queued')
+       RETURNING id`,
+      [userId || 1, outputPath, resolution, format]
+    );
+    const exportId = exportResult.rows[0].id;
+    
+    const job = await addExportJob(userId || 1, exportId, { inputPath, outputPath, resolution, format });
+    res.json({ jobId: job.jobId, exportId: job.exportId, status: 'queued' });
   } catch (error: any) {
     res.status(500).json({ error: 'Failed to queue export job', details: error.message });
   }

@@ -671,3 +671,217 @@ export async function trackAnalyticsEvent(eventType: string, metadata?: any) {
 }
 
 export { API_BASE_URL };
+
+// ─── Phase 8: Export & Rendering ─────────────────────────────────
+
+export interface ExportRecord {
+  id: number;
+  name: string;
+  resolution: string;
+  format: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'expired';
+  progress: number;
+  duration: number | null;
+  durationFormatted: string | null;
+  fileSize: number | null;
+  fileSizeFormatted: string | null;
+  outputFilename: string | null;
+  expiresAt: string | null;
+  downloadCount: number;
+  createdAt: string;
+  completedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface ExportStats {
+  total: number;
+  completed: number;
+  processing: number;
+  failed: number;
+  totalStorageBytes: number;
+}
+
+export interface ExportDetail extends ExportRecord {
+  input_path: string;
+  output_path: string | null;
+  bitrate: string;
+  framerate: number;
+  include_audio: boolean;
+  compression_level: string;
+  job_id: string | null;
+  ffmpeg_command: string | null;
+  logs: ExportLog[];
+  shareLinks: ShareLinkData[];
+}
+
+export interface ExportLog {
+  id: number;
+  export_id: number;
+  job_id: string | null;
+  status: string;
+  progress: number;
+  stage: string | null;
+  message: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export interface ShareLinkData {
+  id: number;
+  shareUrl?: string;
+  urlToken: string;
+  isActive: boolean;
+  downloadCount: number;
+  maxDownloads: number | null;
+  hasPassword: boolean;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface CreateExportParams {
+  timeline_id?: number;
+  project_id?: number;
+  name?: string;
+  input_path: string;
+  resolution?: '720p' | '1080p' | '4k';
+  format?: 'mp4' | 'mov' | 'webm';
+  bitrate?: string;
+  framerate?: number;
+  compression_level?: 'fast' | 'medium' | 'slow';
+  expiration_hours?: number;
+}
+
+export interface ResolutionOption {
+  id: string;
+  label: string;
+  width: number;
+  height: number;
+  defaultBitrate: string;
+}
+
+export interface FormatOption {
+  id: string;
+  extension: string;
+  mimeType: string;
+  videoCodec: string;
+  audioCodec: string;
+}
+
+export interface ShareLinkCreateResult {
+  message: string;
+  shareUrl: string;
+  share: {
+    id: number;
+    urlToken: string;
+    expiresAt: string;
+    maxDownloads: number | null;
+    hasPassword: boolean;
+  };
+}
+
+export interface SharedExportInfo {
+  export: {
+    id: number;
+    name: string;
+    resolution: string;
+    format: string;
+    durationFormatted: string | null;
+    fileSizeFormatted: string | null;
+    createdAt: string;
+  };
+  share: {
+    expiresAt: string;
+    downloadCount: number;
+    maxDownloads: number | null;
+    hasPassword: boolean;
+  };
+}
+
+// Create a new export
+
+export async function createExport(params: CreateExportParams) {
+  return apiRequest<{ message: string; export: ExportRecord; jobId: string }>('/exports', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+// List user's exports
+
+export async function listExports(params?: { timeline_id?: number; limit?: number; offset?: number }) {
+  const query = new URLSearchParams();
+  if (params?.timeline_id) query.set('timeline_id', String(params.timeline_id));
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.offset) query.set('offset', String(params.offset));
+  const qs = query.toString();
+  return apiRequest<{ exports: ExportRecord[]; stats: ExportStats }>(`/exports${qs ? '?' + qs : ''}`);
+}
+
+// Get export details
+
+export async function getExport(id: number) {
+  return apiRequest<{ export: ExportDetail }>(`/exports/${id}`);
+}
+
+// Delete an export
+
+export async function deleteExport(id: number) {
+  return apiRequest<{ message: string }>(`/exports/${id}`, { method: 'DELETE' });
+}
+
+// Get export download URL
+
+export function getExportDownloadUrl(exportId: number): string {
+  return `${API_BASE_URL}/exports/${exportId}/download`;
+}
+
+// Create a share link for an export
+
+export async function createShareLink(exportId: number, options?: {
+  max_downloads?: number;
+  password?: string;
+  expiration_hours?: number;
+}) {
+  return apiRequest<ShareLinkCreateResult>(`/exports/${exportId}/share`, {
+    method: 'POST',
+    body: JSON.stringify(options || {}),
+  });
+}
+
+// Get share links for an export
+
+export async function getShareLinks(exportId: number) {
+  return apiRequest<{ links: ShareLinkData[] }>(`/exports/${exportId}/shares`);
+}
+
+// Revoke a share link
+
+export async function revokeShareLink(exportId: number, token: string) {
+  return apiRequest<{ message: string }>(`/exports/${exportId}/shares/${token}`, { method: 'DELETE' });
+}
+
+// Get resolution/format options
+
+export async function getExportOptions() {
+  return apiRequest<{ resolutions: ResolutionOption[]; formats: FormatOption[] }>('/exports/options');
+}
+
+// Get export queue status
+
+export async function getExportQueueStatus() {
+  return apiRequest<{ queue: { waiting: number; active: number; completed: number; failed: number; delayed: number } }>('/exports/queue/status');
+}
+
+// Access shared export (public)
+
+export async function accessSharedExport(token: string) {
+  return apiRequest<SharedExportInfo>(`/exports/share/${token}`);
+}
+
+// Download shared export (public)
+// Returns a URL for direct download
+
+export function getSharedDownloadUrl(token: string, password?: string): string {
+  const base = `${API_BASE_URL}/exports/share/${token}/download`;
+  return password ? `${base}?password=${encodeURIComponent(password)}` : base;
+}
