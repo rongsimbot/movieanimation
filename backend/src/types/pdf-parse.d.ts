@@ -7,12 +7,6 @@ declare module 'pdf-parse' {
     text: string;
     version: string;
   }
-
-  function pdfParse(dataBuffer: Buffer | Uint8Array, options?: {
-    pagerender?: (pageData: any) => string;
-    max?: number;
-    version?: string;
-  }): Promise<PDFData>;
-
-  export = pdfParse;
+  function pdf(dataBuffer: Buffer, options?: Record<string, any>): Promise<PDFData>;
+  export = pdf;
 }
