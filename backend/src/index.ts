@@ -98,15 +98,44 @@ app.use('/thumbnails', staticCacheHeaders, express.static('thumbnails'));
 // ETag middleware for read-heavy API routes (Phase 7: Polish)
 app.use(['/api/analytics', '/api/scripts', '/api/characters', '/api/assets'], etagMiddleware({ maxAge: 30 }));
 
-// Request logging in development
-if (process.env.NODE_ENV === 'development') {
-  app.use((req, _res, next) => {
-    if (req.path !== '/api/health') {
-      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} [${req.requestId}]`);
+// ─── Request Logging with Response Times ───────────────────────
+
+app.use((req, res, next) => {
+  const startTime = Date.now();
+  const { method, path, requestId } = req;
+
+  // Skip health check pings in logs to reduce noise
+  if (path === '/api/health') {
+    return next();
+  }
+
+  // Log response on finish
+  res.on('finish', () => {
+    const duration = Date.now() - startTime;
+    const { statusCode } = res;
+    const level = statusCode >= 500 ? 'ERROR' : statusCode >= 400 ? 'WARN' : 'INFO';
+
+    const logLine = [
+      `[${new Date().toISOString()}]`,
+      `${level}`,
+      `${method} ${path}`,
+      `${statusCode}`,
+      `${duration}ms`,
+      `[${requestId}]`,
+    ].join(' ');
+
+    if (statusCode >= 500) {
+      console.error(logLine);
+    } else if (statusCode >= 400) {
+      console.warn(logLine);
+    } else if (process.env.NODE_ENV === 'development') {
+      console.log(logLine);
     }
-    next();
+    // In production, only log 4xx/5xx; 2xx are silent
   });
-}
+
+  next();
+});
 
 // ─── Routes ─────────────────────────────────────────────────────
 
@@ -222,6 +251,31 @@ app.use(notFoundHandler);
 
 // Global error handler (must be last middleware)
 app.use(globalErrorHandler);
+
+// ─── Process-Level Error Handling ─────────────────────────────
+
+process.on('uncaughtException', (error: Error) => {
+  console.error(`[FATAL] Uncaught Exception: ${error.message}`);
+  console.error(error.stack);
+  // Give logging time to flush, then exit
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  console.error(`[FATAL] Unhandled Rejection at:`, promise);
+  console.error(`[FATAL] Reason:`, reason instanceof Error ? reason.message : reason);
+  if (reason instanceof Error) {
+    console.error(reason.stack);
+  }
+  // Don't exit — unhandled rejections may be recoverable in Node 16+
+});
+
+// Warn on memory pressure
+process.on('warning', (warning: Error) => {
+  if (warning.name === 'MaxListenersExceededWarning') {
+    console.warn(`[WARN] MaxListenersExceeded: ${warning.message}`);
+  }
+});
 
 // ─── Start Server ──────────────────────────────────────────────
 

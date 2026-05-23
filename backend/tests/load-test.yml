@@ -1,0 +1,251 @@
+# MovieAnimation Beta - Load Test Configuration
+# Framework: Artillery (https://artillery.io)
+# Install:  npm install -g artillery
+# Run:      BASE_URL=http://localhost:3001 artillery run tests/load-test.yml
+#
+# Scenarios simulate realistic beta user behavior:
+#   - Health check monitoring (background pings)
+#   - New user registration + immediate login
+#   - Project creation and browsing
+#   - Authenticated API queries (status, info, dashboard)
+
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3001' }}"
+  
+  phases:
+    # Phase 1: Warm-up — gradual ramp from 1 to 10 users over 60 seconds
+    - name: "warmup"
+      duration: 60
+      arrivalRate: 1
+      rampTo: 5
+      
+    # Phase 2: Steady load — 10 new users/second for 2 minutes
+    - name: "steady"
+      duration: 120
+      arrivalRate: 5
+      
+    # Phase 3: Spike — burst to 20 users/second for 30 seconds
+    - name: "spike"
+      duration: 30
+      arrivalRate: 10
+
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept: "application/json"
+
+  processor: "./load-test-helpers.js"
+
+  # Environment-specific overrides
+  variables:
+    testEmail: "loadtest_{{ $randomString(8) }}@test.movieanimation.ai"
+    testPassword: "TestPass123!"
+    testName: "Beta Tester"
+
+  # Plugins for metrics
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+# ─── Test Scenarios ──────────────────────────────────────────────
+
+scenarios:
+  # Scenario 1: Health & Status Checks (5% weight — background monitoring)
+  - name: "health_and_status"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/health"
+          expect:
+            - statusCode: 200
+            - contentType: json
+            - hasProperty: status
+            - hasProperty: database
+      - think: 1
+      - get:
+          url: "/api/status"
+          expect:
+            - statusCode: 200
+            - hasProperty: data
+      - think: 2
+
+  # Scenario 2: New User Registration + Login (20% weight — onboarding)
+  - name: "register_and_login"
+    weight: 20
+    flow:
+      # Step 1: Register a new user
+      - post:
+          url: "/api/auth/register"
+          json:
+            name: "{{ testName }}_{{ $randomString(4) }}"
+            email: "reg_{{ $randomString(6) }}@test.movieanimation.ai"
+            password: "{{ testPassword }}"
+          expect:
+            - statusCode: 201
+            - hasProperty: user
+            - hasProperty: tokens
+          capture:
+            - json: "$.tokens.accessToken"
+              as: "accessToken"
+            - json: "$.user.id"
+              as: "userId"
+      
+      - think: 2
+      
+      # Step 2: Verify auth with /me
+      - get:
+          url: "/api/auth/me"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          expect:
+            - statusCode: 200
+            - hasProperty: data
+      
+      - think: 3
+      
+      # Step 3: Create a project
+      - post:
+          url: "/api/projects"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          json:
+            title: "Beta Test Project {{ $randomString(6) }}"
+            description: "Load test generated project"
+            genre: "scifi"
+          expect:
+            - statusCode: 200
+          capture:
+            - json: "$.data.id"
+              as: "projectId"
+
+      - think: 2
+      
+      # Step 4: Browse projects
+      - get:
+          url: "/api/projects?page=1&limit=10"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          expect:
+            - statusCode: 200
+
+      - think: 5
+
+  # Scenario 3: Authenticated Browsing (35% weight — active user)
+  - name: "authenticated_browsing"
+    weight: 35
+    beforeScenario: "getTestUserToken"
+    flow:
+      # Browse projects
+      - get:
+          url: "/api/projects?page=1&limit=10"
+          headers:
+            Authorization: "Bearer {{ testToken }}"
+          expect:
+            - statusCode: 200
+      
+      - think: 2
+      
+      # Check analytics dashboard
+      - get:
+          url: "/api/analytics/dashboard"
+          headers:
+            Authorization: "Bearer {{ testToken }}"
+          expect:
+            - statusCode: 200
+      
+      - think: 1
+      
+      # Check cost dashboard
+      - get:
+          url: "/api/costs/my-usage"
+          headers:
+            Authorization: "Bearer {{ testToken }}"
+          expect:
+            - statusCode: 200
+      
+      - think: 3
+      
+      # Get API info
+      - get:
+          url: "/api/info"
+          headers:
+            Authorization: "Bearer {{ testToken }}"
+          expect:
+            - statusCode: 200
+
+      - think: 2
+
+  # Scenario 4: Login Existing User (25% weight — returning users)
+  - name: "login_existing"
+    weight: 25
+    flow:
+      # Login with known test credentials
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          expect:
+            - statusCode: [200, 401]  # 401 OK if test user doesn't exist
+          capture:
+            - json: "$.tokens.accessToken"
+              as: "loginToken"
+              strict: false
+      
+      - think: 1
+      
+      # View own profile if login succeeded
+      - get:
+          url: "/api/auth/me"
+          headers:
+            Authorization: "Bearer {{ loginToken }}"
+          ifTrue: "loginToken"
+          expect:
+            - statusCode: [200, 401]
+      
+      - think: 3
+
+  # Scenario 5: API Info + Health (15% weight — lightweight API consumers)
+  - name: "lightweight"
+    weight: 15
+    flow:
+      - get:
+          url: "/api/info"
+          expect:
+            - statusCode: 200
+            - hasProperty: data
+      
+      - think: 1
+      
+      - get:
+          url: "/api/health"
+          expect:
+            - statusCode: 200
+            - hasProperty: status
+      
+      - think: 2
+      
+      - get:
+          url: "/api/status"
+          expect:
+            - statusCode: 200
+      
+      - think: 1
+
+# ─── Performance Thresholds ──────────────────────────────────────
+
+# If these are breached, Artillery exits with non-zero code
+ensure:
+  thresholds:
+    # 95th percentile response time must be under 2000ms
+    - http.response_time.p95: 2000
+    # 99th percentile response time must be under 5000ms
+    - http.response_time.p99: 5000
+    # Error rate must stay below 5%
+    - http.error_rate: 0.05
+
+# ─── Reporting ──────────────────────────────────────────────────
+
+# Output to JSON for further analysis
+# Run with: artillery run --output report.json tests/load-test.yml
+# Generate HTML: artillery report report.json
