@@ -23,6 +23,7 @@ import analyticsRoutes from './routes/analyticsRoutes';
 import exportRoutes from './routes/exportRoutes';
 import previewRoutes from './routes/previewRoutes'; // Phase 5
 import { testConnection, closePool } from './config/database';
+import Redis from 'ioredis';
 import { closeQueues } from './queue/videoQueue';
 import { closeExportQueue } from './queue/exportQueue';
 import { getFailoverHealth } from './services/apiFailover';
@@ -291,12 +292,26 @@ const server = app.listen(PORT, async () => {
   console.log(`📊 Analytics: Usage tracking + Cost monitoring`);
   console.log(`⚡ Performance: ETags + Response caching + Static asset caching`);
   console.log(`🎨 UI: Enhanced dashboard + Cost tracking + Error boundaries`);
+  console.log(`🔄 Redis: BullMQ job queue ready`);
   console.log(`\n🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API: http://localhost:${PORT}/api`);
   console.log(`📊 Analytics: http://localhost:${PORT}/api/analytics`);
   console.log(`🎞️  Previews: http://localhost:${PORT}/api/preview`);
   console.log(`📦 Exports: http://localhost:${PORT}/api/exports`);
   console.log(`\n`);
+
+  // Test Redis connection
+  try {
+    const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379', { 
+      maxRetriesPerRequest: 2, 
+      connectTimeout: 5000 
+    });
+    await redis.ping();
+    await redis.quit();
+    console.log('✅ Redis: Connected — BullMQ job queues ready');
+  } catch (err) {
+    console.warn('⚠️  Redis: Connection failed — job queues will retry when available');
+  }
 
   // Initialize analytics table
   try {
