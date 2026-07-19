@@ -80,20 +80,21 @@ export default function BetaOnboardingPage() {
 
         {/* Progress Indicator */}
         <div className="flex items-center justify-center gap-4 mb-12">
-          {['intro', 'welcome', 'complete'].map((s, i) => (
+          {(['intro', 'welcome', 'complete'] as const).map((s, i) => {
+            const stepIndex = (['intro', 'welcome', 'complete'] as const).indexOf(step);
+            const isCompleted = i <= stepIndex;
+            const isCurrent = s === step;
+            return (
             <div key={s} className="flex items-center gap-2">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
-                step === s || (step === 'complete' && i < 2) || (step === 'welcome' && i < 1)
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-zinc-800 text-zinc-500'
+                isCompleted ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-500'
               }`}>
-                {step === 'complete' || (step !== s && (
-                  (step === 'complete' && i < 2) || (step === 'welcome' && i < 1)
-                )) ? <CheckCircle className="w-4 h-4" /> : i + 1}
+                {isCompleted && !isCurrent ? <CheckCircle className="w-4 h-4" /> : i + 1}
               </div>
-              {i < 2 && <div className="w-12 h-0.5 bg-zinc-800" />}
+              {i < 2 && <div className={`w-12 h-0.5 ${i < stepIndex ? 'bg-purple-600' : 'bg-zinc-800'}`} />}
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Step 1: Intro */}

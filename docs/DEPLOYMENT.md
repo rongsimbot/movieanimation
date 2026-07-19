@@ -197,6 +197,14 @@ vercel --prod
 
 ## Step 6: Tailscale VPN (Azure → Local)
 
+### Automated Setup (Recommended)
+```bash
+# From LoServer
+cd ~/.openclaw/workspace/projects/movieanimation/infrastructure/azure-vpn/tailscale
+sudo TAILSCALE_AUTH_KEY="tskey-auth-..." ./setup.sh
+```
+
+### Manual Setup
 ```bash
 # Install Tailscale on both Azure VM and LoServer
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -208,6 +216,16 @@ sudo tailscale up --authkey=<TAILSCALE_AUTH_KEY>
 tailscale status
 # Should show both nodes as active
 ```
+
+### Configure ACL Rules
+Upload the ACL config to Tailscale admin console:
+```bash
+cat infrastructure/azure-vpn/tailscale/tailscale-acl.json
+# Copy/paste into: https://login.tailscale.com/admin/acls
+```
+
+### Full Documentation
+See `infrastructure/azure-vpn/ARCHITECTURE.md` for complete VPN architecture details.
 
 ---
 

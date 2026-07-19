@@ -147,7 +147,7 @@ export const getCharacterAssets = async (req: AuthRequest, res: Response, next: 
     if (!character) return res.status(404).json({ error: 'Character not found' });
 
     const { getUserAssets } = require('../models/assetModel');
-    const assets = await getUserAssets(req.user!.id, { character_id: id });
+    const assets = await getUserAssets(req.user!.sub, { character_id: id });
 
     res.json({ character, assets });
   } catch (err) {

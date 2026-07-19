@@ -187,7 +187,7 @@ export default function DashboardPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => router.push("/project/list")}
+                onClick={() => router.push("/dashboard")}
                 className="text-zinc-400 hover:text-white text-xs"
               >
                 View All <ArrowRight className="w-3 h-3 ml-1" />
@@ -232,7 +232,7 @@ export default function DashboardPage() {
                 <p className="text-sm text-zinc-500 mb-3">No scripts yet</p>
                 <Button
                   size="sm"
-                  onClick={() => router.push("/project/new")}
+                  onClick={() => router.push("/dashboard")}
                   className="text-xs"
                 >
                   Create Your First Script
@@ -289,7 +289,7 @@ export default function DashboardPage() {
               📊 View Cost Dashboard
             </button>
             <button
-              onClick={() => router.push("/upload")}
+              onClick={() => router.push("/dashboard")}
               className="rounded-lg border border-zinc-700 bg-zinc-800/50 px-4 py-3 text-left text-sm text-zinc-300 hover:border-zinc-500 hover:bg-zinc-800 transition"
             >
               📤 Upload Script

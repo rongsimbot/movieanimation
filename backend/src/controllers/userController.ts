@@ -23,7 +23,7 @@ function toISO(date: Date | string): string {
  */
 export const getUserProfile = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.sub;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -45,7 +45,7 @@ export const getUserProfile = async (req: AuthRequest, res: Response, next: Next
  */
 export const getUserDashboardData = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.sub;
     if (!userId) {
       return res.status(401).json({ error: 'Unauthorized' });
     }

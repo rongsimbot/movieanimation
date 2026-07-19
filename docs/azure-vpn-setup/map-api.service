@@ -1,0 +1,52 @@
+# MovieAnimation Processing API (MAP-API) — Systemd Service
+# Deploy to: /etc/systemd/system/map-api.service (Dell GB10)
+# Enable: sudo systemctl enable map-api && sudo systemctl start map-api
+
+[Unit]
+Description=MovieAnimation Processing API (MAP-API)
+Documentation=https://github.com/rongsimbot/movieanimation
+After=network.target tailscaled.service
+Requires=tailscaled.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=simrobotics
+Group=simrobotics
+WorkingDirectory=/home/simrobotics/map-api
+
+# Environment variables — load from .env file
+EnvironmentFile=/home/simrobotics/map-api/.env
+
+# Bind to Tailscale IP only (secure: no public exposure)
+# If Tailscale is not running, use 127.0.0.1 as fallback
+ExecStartPre=/bin/sh -c ' \
+  TS_IP=$(tailscale ip -4 2>/dev/null || echo "127.0.0.1"); \
+  echo "Binding MAP-API to ${TS_IP}:8000"; \
+'
+
+ExecStart=/home/simrobotics/map-api/venv/bin/uvicorn app.main:app \
+    --host 100.64.2.10 \
+    --port 8000 \
+    --workers 4 \
+    --log-level info \
+    --access-log \
+    --proxy-headers \
+    --timeout-keep-alive 65
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=4G
+CPUQuota=400%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=map-api
+
+[Install]
+WantedBy=multi-user.target

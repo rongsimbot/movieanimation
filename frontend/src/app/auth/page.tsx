@@ -1,16 +1,32 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { registerUser, loginUser, storeAuth, RegisterParams, LoginParams } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 export default function AuthPage() {
+  return (
+    <Suspense fallback={<AuthSkeleton />}>
+      <AuthContent />
+    </Suspense>
+  );
+}
+
+function AuthContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // Handle ?mode=register query param
+  useEffect(() => {
+    if (searchParams.get("mode") === "register") {
+      setMode("register");
+    }
+  }, [searchParams]);
 
   const [form, setForm] = useState({
     name: "",
@@ -291,6 +307,24 @@ export default function AuthPage() {
         <p className="text-center text-xs text-zinc-600">
           SimRobotics Corp &copy; {new Date().getFullYear()}
         </p>
+      </div>
+    </div>
+  );
+}
+
+function AuthSkeleton() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 px-4">
+      <div className="w-full max-w-md space-y-8 animate-pulse">
+        <div className="text-center">
+          <div className="h-9 w-64 bg-zinc-800 rounded mx-auto mb-2" />
+          <div className="h-4 w-40 bg-zinc-800 rounded mx-auto" />
+        </div>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-8 space-y-5">
+          <div className="h-10 bg-zinc-800 rounded-lg" />
+          <div className="h-10 bg-zinc-800 rounded-lg" />
+          <div className="h-11 bg-zinc-800 rounded-lg" />
+        </div>
       </div>
     </div>
   );

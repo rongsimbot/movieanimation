@@ -168,12 +168,18 @@ export function storeAuth(result: AuthResult): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(TOKEN_KEY, result.tokens.accessToken);
   localStorage.setItem(USER_KEY, JSON.stringify(result.user));
+  // Also set a cookie for middleware to read (server-side auth check)
+  const expires = new Date();
+  expires.setDate(expires.getDate() + 7); // 7-day cookie
+  document.cookie = `${TOKEN_KEY}=${result.tokens.accessToken}; expires=${expires.toUTCString()}; path=/; SameSite=Lax`;
 }
 
 export function clearAuth(): void {
   if (typeof window === 'undefined') return;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  // Clear the auth cookie
+  document.cookie = `${TOKEN_KEY}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
 }
 
 export function getStoredUser(): AuthResult['user'] | null {
@@ -188,6 +194,67 @@ export function getStoredUser(): AuthResult['user'] | null {
 
 export function isAuthenticated(): boolean {
   return !!getStoredToken();
+}
+
+// ─── Stripe: Payment & Subscription Endpoints ──────────────────
+
+export interface Plan {
+  id: string;
+  name: string;
+  price: string;
+  currency: string;
+  interval: string;
+  features: string[];
+}
+
+export interface CheckoutResult {
+  message: string;
+  sessionId: string;
+  url: string;
+}
+
+export interface SubscriptionData {
+  hasSubscription: boolean;
+  subscription: {
+    id: string;
+    status: string;
+    planId: string;
+    currentPeriodStart: number;
+    currentPeriodEnd: number;
+    cancelAtPeriodEnd: boolean;
+    customerId: string;
+  } | null;
+}
+
+export async function getPlans() {
+  return apiRequest<{ plans: Plan[] }>('/payments/plans');
+}
+
+export async function createCheckout(params: {
+  planId: string;
+  successUrl: string;
+  cancelUrl: string;
+}) {
+  return apiRequest<CheckoutResult>('/payments/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function getMySubscription() {
+  return apiRequest<SubscriptionData>('/payments/subscription');
+}
+
+export async function cancelMySubscription() {
+  return apiRequest<{ message: string; subscription: SubscriptionData['subscription'] }>('/payments/subscription/cancel', {
+    method: 'POST',
+  });
+}
+
+export async function reactivateMySubscription() {
+  return apiRequest<{ message: string; subscription: SubscriptionData['subscription'] }>('/payments/subscription/reactivate', {
+    method: 'POST',
+  });
 }
 
 // ─── Phase 3: Script Endpoints ──────────────────────────────────

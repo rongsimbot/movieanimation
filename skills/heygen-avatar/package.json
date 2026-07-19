@@ -1,0 +1,29 @@
+{
+  "name": "@simrobotics/heygen-avatar",
+  "version": "1.0.0",
+  "description": "HeyGen avatar animation skill for MovieAnimation.ai — Luma scene + ElevenLabs audio → HeyGen avatar video pipeline",
+  "main": "client.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "jest --forceExit --detectOpenHandles",
+    "test:integration": "node test/integration.test.js",
+    "lint": "eslint . --ext .js"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0",
+    "form-data": "^4.0.0",
+    "bull": "^4.12.9",
+    "dotenv": "^16.4.5",
+    "fs-extra": "^11.2.0",
+    "axios": "^1.7.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nock": "^13.5.4",
+    "eslint": "^8.57.0"
+  }
+}

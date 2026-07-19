@@ -429,7 +429,7 @@ export const uploadScriptFile = async (req: AuthRequest, res: Response, next: Ne
       }
 
       // Save to temp location for extraction
-      const userId = req.user!.id;
+      const userId = req.user!.sub;
       const saved = await saveFile(file.buffer, file.originalname, userId);
       const { getAbsolutePath } = require('../services/assetService');
       tempPath = getAbsolutePath(saved.filePath);

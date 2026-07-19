@@ -30,7 +30,7 @@ startExportCleanup();
 
 export const createExport = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user!.sub;
     const {
       timeline_id,
       project_id,
@@ -153,7 +153,7 @@ export const createExport = async (req: AuthRequest, res: Response, next: NextFu
 
 export const listExports = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user!.sub;
     const { limit = '20', offset = '0', timeline_id } = req.query;
 
     let exports: exportModel.ExportRecord[];
@@ -299,7 +299,7 @@ export const deleteExport = async (req: AuthRequest, res: Response, next: NextFu
     if (!exportRecord) return res.status(404).json({ error: 'Export not found' });
 
     // Only allow deleting own exports (unless admin)
-    if (exportRecord.user_id !== req.user!.id) {
+    if (exportRecord.user_id !== req.user!.sub) {
       return res.status(403).json({ error: 'You can only delete your own exports' });
     }
 
@@ -341,7 +341,7 @@ export const createShareLink = async (req: AuthRequest, res: Response, next: Nex
 
     const shareLink = await exportModel.createShareLink(
       exportId,
-      req.user!.id,
+      req.user!.sub,
       {
         max_downloads: max_downloads || null,
         password: password || undefined,

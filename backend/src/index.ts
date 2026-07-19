@@ -22,16 +22,21 @@ import timelineRoutes from './routes/timelineRoutes';
 import analyticsRoutes from './routes/analyticsRoutes';
 import exportRoutes from './routes/exportRoutes';
 import previewRoutes from './routes/previewRoutes'; // Phase 5
+import paymentRoutes from './routes/paymentRoutes'; // Stripe Phase
+import queueRoutes from './routes/queueRoutes'; // Phase 4
 import { testConnection, closePool } from './config/database';
+import { runMigrations } from './config/runMigrations';
 import Redis from 'ioredis';
 import { closeQueues } from './queue/videoQueue';
 import { closeExportQueue } from './queue/exportQueue';
+import { startHealthMonitor, stopHealthMonitor } from './services/queueHealthMonitor';
 import { getFailoverHealth } from './services/apiFailover';
 import { getPoolStats } from './services/keyManager';
 import { getWebhookHealth } from './services/webhookManager';
 import { ensureAnalyticsTable } from './services/analyticsService';
 import { requestIdMiddleware, globalErrorHandler, notFoundHandler } from './middleware/errorHandler';
 import { rateLimiter, authRateLimiter, uploadRateLimiter, generationRateLimiter } from './middleware/rateLimiter';
+import { csrfProtection } from './middleware/auth';
 import { etagMiddleware, staticCacheHeaders } from './middleware/cacheMiddleware';
 
 const app = express();
@@ -81,6 +86,10 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // General rate limit for all /api routes
 app.use('/api', rateLimiter());
+
+// CSRF protection for state-changing API routes
+// Automatically skips GET, HEAD, OPTIONS and public OAuth callbacks
+app.use('/api', csrfProtection);
 
 // Static asset caching headers (Phase 7: Polish)
 app.use('/uploads', express.static('uploads', { setHeaders: (res, path) => {
@@ -150,6 +159,8 @@ app.use('/api/timelines', timelineRoutes);
 app.use('/api/analytics', analyticsRoutes); // Phase 11
 app.use('/api/exports', exportRoutes); // Phase 8
 app.use('/api/preview', previewRoutes); // Phase 5: Video preview generation
+app.use('/api/payments', paymentRoutes); // Stripe: Payments & subscriptions
+app.use('/api/queue', queueRoutes); // Phase 4: Job queue tracking & management
 
 // ─── Health Check ──────────────────────────────────────────────
 
@@ -162,11 +173,25 @@ app.get('/api/health', async (_req, res) => {
   res.json({
     status: dbConnected ? 'ok' : 'degraded',
     service: 'movieanimation-backend',
-    version: '1.7.0',
-    phase: 7,  // Phase 7: Polish
+    version: '1.8.0',
+    phase: 8,  // Phase 8: Stripe + Polish
     features: [
-      // Phase 2
+      // Phase 9
       'user-registration',
+      'user-login',
+      'jwt-authentication',
+      'bcrypt-password-hashing',
+      'protected-routes',
+      'refresh-tokens',
+      'email-verification',
+      'password-reset-flow',
+      'password-change',
+      'session-management',
+      'oauth-google-github',
+      'csrf-protection',
+      'rate-limiting',
+      'user-dashboard',
+      // Phase 2
       'user-login',
       'jwt-authentication',
       'bcrypt-password-hashing',
@@ -198,7 +223,6 @@ app.get('/api/health', async (_req, res) => {
       // Phase 11
       'security-headers-helmet',
       'response-compression',
-      'rate-limiting',
       'request-id-tracking',
       'enhanced-error-handling',
       'analytics-tracking',
@@ -223,6 +247,11 @@ app.get('/api/health', async (_req, res) => {
       'contact-sheets',
       'frame-strip-extraction',
       'scene-clip-management',
+      // Stripe
+      'stripe-payments',
+      'subscription-management',
+      'checkout-sessions',
+      'stripe-webhooks',
       // Phase 8
       'final-rendering-pipeline',
       'ffmpeg-export-engine',
@@ -231,6 +260,11 @@ app.get('/api/health', async (_req, res) => {
       'shareable-download-links',
       'password-protected-sharing',
       'export-queue-management',
+      // Phase 4
+      'job-queue-tracking',
+      'dead-letter-queue',
+      'queue-health-monitoring',
+      'queue-management-api',
     ],
     database: dbConnected ? 'connected' : 'disconnected',
     apis: {
@@ -282,7 +316,7 @@ process.on('warning', (warning: Error) => {
 
 const server = app.listen(PORT, async () => {
   console.log(`\n🎬 MovieAnimation Backend v1.7.0`);
-  console.log(`🔐 Phase 2: Authentication — READY`);
+  console.log(`🔐 Phase 9: User Authentication — READY`);
   console.log(`🎞️  Phase 5: Video Previews — READY`);
   console.log(`🎥 Phase 6: Video Generation — READY`);
   console.log(`✂️  Phase 7: Video Assembly + Polish — READY`);
@@ -298,6 +332,8 @@ const server = app.listen(PORT, async () => {
   console.log(`📊 Analytics: http://localhost:${PORT}/api/analytics`);
   console.log(`🎞️  Previews: http://localhost:${PORT}/api/preview`);
   console.log(`📦 Exports: http://localhost:${PORT}/api/exports`);
+  console.log(`💳 Payments: http://localhost:${PORT}/api/payments`);
+  console.log(`📋 Queue: http://localhost:${PORT}/api/queue`);
   console.log(`\n`);
 
   // Test Redis connection
@@ -313,7 +349,26 @@ const server = app.listen(PORT, async () => {
     console.warn('⚠️  Redis: Connection failed — job queues will retry when available');
   }
 
+  // Start queue health monitor
+  try {
+    startHealthMonitor();
+    console.log('✅ Queue Monitor: Health snapshots started (every 5 min)');
+  } catch (err: any) {
+    console.warn(`⚠️  Queue Monitor: ${err.message}`);
+  }
+
   // Initialize analytics table
+  try {
+    // Run database migrations
+    console.log('📦 Running migrations...');
+    const newMigrations = await runMigrations();
+    if (newMigrations.length > 0) {
+      console.log(`✅ Migrations: Applied ${newMigrations.length} new migration(s)`);
+    }
+  } catch (err: any) {
+    console.warn(`⚠️  Migrations: ${err.message}`);
+  }
+
   try {
     await ensureAnalyticsTable();
     console.log('✅ Analytics: Events table ready');
@@ -336,6 +391,7 @@ async function shutdown() {
   console.log('\n🛑 Shutting down gracefully...');
   server.close();
   await closePool();
+  stopHealthMonitor();
   await closeQueues();
   await closeExportQueue();
   process.exit(0);

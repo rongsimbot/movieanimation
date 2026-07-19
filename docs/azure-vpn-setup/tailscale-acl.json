@@ -1,0 +1,119 @@
+{
+  "comment": "MovieAnimation.ai — Tailscale ACL Policy",
+  "comment_detail": "Enforces least-privilege access: Azure → GPU (8000) + DB (5432), Admin → full access, all else DENIED",
+  "version": "1.0",
+
+  "groups": {
+    "group:admins": ["ronnie@simrobotics.com"],
+    "group:devs":   ["ronnie@simrobotics.com"]
+  },
+
+  "tagOwners": {
+    "tag:azure-frontend": ["group:admins"],
+    "tag:gpu-server":     ["group:admins"],
+    "tag:database":       ["group:admins"]
+  },
+
+  "hosts": {
+    "db-direct":  "100.64.2.20",
+    "gpu-direct": "100.64.2.10",
+    "azure-direct": "100.64.1.10"
+  },
+
+  "acls": [
+    {
+      "comment": "=== Production Traffic ===",
+      "action": "accept",
+      "src":    [],
+      "dst":    [],
+      "proto":  ""
+    },
+    {
+      "comment": "Azure App Service → MAP-API GPU rendering (port 8000)",
+      "action": "accept",
+      "src":    ["tag:azure-frontend"],
+      "dst":    ["tag:gpu-server:8000"],
+      "proto":  "tcp"
+    },
+    {
+      "comment": "Azure App Service → PostgreSQL database (port 5432)",
+      "action": "accept",
+      "src":    ["tag:azure-frontend"],
+      "dst":    ["tag:database:5432"],
+      "proto":  "tcp"
+    },
+    {
+      "comment": "Azure App Service → PgBouncer connection pool (port 6432)",
+      "action": "accept",
+      "src":    ["tag:azure-frontend"],
+      "dst":    ["tag:database:6432"],
+      "proto":  "tcp"
+    },
+    {
+      "comment": "GPU Server → PostgreSQL (internal rendering lookups)",
+      "action": "accept",
+      "src":    ["tag:gpu-server"],
+      "dst":    ["tag:database:5432"],
+      "proto":  "tcp"
+    },
+
+    {
+      "comment": "=== Admin Access ===",
+      "action": "accept",
+      "src":    ["group:admins"],
+      "dst":    [
+        "tag:gpu-server:22",
+        "tag:gpu-server:8000",
+        "tag:database:22",
+        "tag:database:5432",
+        "tag:azure-frontend:22",
+        "tag:azure-frontend:*"
+      ],
+      "proto": "tcp"
+    },
+
+    {
+      "comment": "=== Developer Access ===",
+      "action": "accept",
+      "src":    ["group:devs"],
+      "dst":    [
+        "tag:gpu-server:8000",
+        "tag:database:5432",
+        "tag:azure-frontend:8080"
+      ],
+      "proto": "tcp"
+    }
+  ],
+
+  "ssh": [
+    {
+      "comment": "Allow admins to SSH into any tagged node",
+      "action": "accept",
+      "src":    ["group:admins"],
+      "dst":    ["tag:gpu-server", "tag:database"],
+      "users":  ["simrobotics", "root"]
+    }
+  ],
+
+  "autoApprovers": {
+    "comment": "Auto-approve subnet routes for these nodes",
+    "routes": {
+      "192.168.1.0/24": ["tag:azure-frontend", "group:admins"],
+      "10.0.0.0/16":    ["tag:azure-frontend"]
+    },
+    "exitNode": ["group:admins"]
+  },
+
+  "nodeAttrs": [
+    {
+      "comment": "Mark Azure node as ephemeral (auto-clean on disconnect)",
+      "target": ["tag:azure-frontend"],
+      "attr":   ["ephemeral"]
+    }
+  ],
+
+  "derpMap": {
+    "comment": "DERP relay servers — Tailscale auto-selects nearest",
+    "omitDefaultRegions": false
+  }
+}

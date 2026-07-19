@@ -1,0 +1,80 @@
+{
+  "groups": {
+    "group:admins": ["ronnie@simrobotics.com"],
+    "group:devs": ["ronnie@simrobotics.com"]
+  },
+  "tagOwners": {
+    "tag:azure-frontend": ["group:devs"],
+    "tag:local-backend": ["group:devs"],
+    "tag:local-database": ["group:devs"],
+    "tag:local-gpu": ["group:devs"]
+  },
+  "acls": [
+    {
+      "comment": "Azure App Service → Backend API (port 3001)",
+      "action": "accept",
+      "src": ["tag:azure-frontend"],
+      "dst": ["tag:local-backend:3001"]
+    },
+    {
+      "comment": "Azure App Service → MAP-API GPU render service (port 8000)",
+      "action": "accept",
+      "src": ["tag:azure-frontend"],
+      "dst": ["tag:local-backend:8000"]
+    },
+    {
+      "comment": "Backend API → PostgreSQL Database on RTX 3060 (port 5432)",
+      "action": "accept",
+      "src": ["tag:local-backend"],
+      "dst": ["tag:local-database:5432"]
+    },
+    {
+      "comment": "Backend API → Redis (port 6379)",
+      "action": "accept",
+      "src": ["tag:local-backend"],
+      "dst": ["tag:local-backend:6379"]
+    },
+    {
+      "comment": "Admin SSH access to all local nodes",
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": [
+        "tag:local-backend:22",
+        "tag:local-database:22",
+        "tag:local-gpu:22"
+      ]
+    },
+    {
+      "comment": "Dev access to backend for debugging",
+      "action": "accept",
+      "src": ["group:devs"],
+      "dst": [
+        "tag:local-backend:3001",
+        "tag:local-backend:8000",
+        "tag:local-backend:6379"
+      ]
+    },
+    {
+      "comment": "Allow Tailscale internal services (DNS, DERP)",
+      "action": "accept",
+      "src": ["*"],
+      "dst": ["*:*"]
+    }
+  ],
+  "ssh": [
+    {
+      "comment": "Allow admins to SSH into any node",
+      "action": "accept",
+      "src": ["group:admins"],
+      "dst": ["tag:local-backend", "tag:local-database", "tag:local-gpu"],
+      "users": ["root", "simrobotics"]
+    }
+  ],
+  "autoApprovers": {
+    "routes": {
+      "192.168.1.0/24": ["tag:local-backend"],
+      "10.0.0.0/24": ["tag:local-backend"]
+    },
+    "exitNode": ["tag:local-backend"]
+  }
+}

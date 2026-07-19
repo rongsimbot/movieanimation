@@ -40,7 +40,7 @@ export const uploadAssets = [
         return res.status(400).json({ error: 'No files uploaded' });
       }
 
-      const userId = req.user!.id;
+      const userId = req.user!.sub;
       const { animation_id, character_id, asset_type } = req.body;
 
       const results = [];
@@ -120,7 +120,7 @@ export const uploadBase64 = async (req: AuthRequest, res: Response, next: NextFu
       return res.status(400).json({ error: validation.error });
     }
 
-    const userId = req.user!.id;
+    const userId = req.user!.sub;
 
     // Save file
     const saved = await saveFile(buffer, file_name, userId);
@@ -159,7 +159,7 @@ export const uploadBase64 = async (req: AuthRequest, res: Response, next: NextFu
  */
 export const listAssets = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user!.sub;
     const { asset_type, animation_id, character_id, limit, offset } = req.query;
 
     const assets = await assetModel.getUserAssets(userId, {
@@ -285,7 +285,7 @@ export const deleteAsset = async (req: AuthRequest, res: Response, next: NextFun
  */
 export const getAssetStats = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const userId = req.user!.id;
+    const userId = req.user!.sub;
     const stats = await assetModel.getAssetStats(userId);
     res.json({ stats });
   } catch (err) {
