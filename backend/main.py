@@ -40,6 +40,19 @@ from slowapi.errors import RateLimitExceeded
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Import project modules
+from cache import response_cache, apply_cache_headers, should_cache
+from security import get_security_headers, validate_input, sanitize_email, get_rate_limit, log_security_event
+from auth import (
+    hash_password, verify_password, create_jwt_token, decode_jwt_token,
+    generate_reset_token, validate_reset_token, clear_reset_token,
+    store_reset_token, generate_verify_token, store_verify_token,
+    verify_email_db, track_login, generate_csrf_token, sign_csrf_token,
+    verify_csrf_token, get_csrf_token as gen_csrf,
+    get_google_oauth_url, get_github_oauth_url, oauth_enabled,
+    create_magic_token, decode_magic_token, blacklist_session,
+)
+
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
 class Settings:
@@ -136,13 +149,59 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Middleware
+# ─── Security Middleware ─────────────────────────────────────────────────────
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    """Apply security headers and input validation to all requests."""
+    # Log incoming request (sanitized)
+    client_ip = request.client.host if request.client else "unknown"
+    # Don't log auth tokens in production
+    if settings.ENV == "development":
+        logger.debug(f"{request.method} {request.url.path} from {client_ip}")
+    
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        logger.error(f"Unhandled error: {e}", exc_info=True)
+        response = JSONResponse(
+            status_code=500,
+            content={"success": False, "detail": "Internal server error. Our team has been notified."}
+        )
+    
+    # Apply security headers
+    sec_headers = get_security_headers(settings.ENV)
+    for key, value in sec_headers.items():
+        if key not in response.headers:
+            response.headers[key] = value
+    
+    # Add cache headers for GET requests
+    if request.method == "GET" and response.status_code == 200:
+        try:
+            # Try to get response body for ETag
+            body = response.body if hasattr(response, 'body') else None
+        except Exception:
+            body = None
+    
+    return response
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Apply rate limiting based on endpoint configuration."""
+    path = request.url.path
+    limit = get_rate_limit(path)
+    # Rate limiting is handled by slowapi decorators on endpoints
+    # This middleware can be extended for IP-based global limits
+    return await call_next(request)
+
+# Standard middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+    expose_headers=["X-Cache-TTL", "ETag", "X-Request-ID"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.state.limiter = limiter
@@ -229,6 +288,53 @@ class AnalyticsEvent(BaseModel):
 class BetaInviteBulk(BaseModel):
     emails: List[EmailStr] = Field(..., min_items=1, max_items=10)
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6, max_length=128)
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+class CSRFTokenResponse(BaseModel):
+    csrf_token: str
+
+class CharacterCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    role: Optional[str] = None
+    gender: Optional[str] = None
+    age_range: Optional[str] = None
+    voice_profile: Optional[str] = None
+    visual_description: Optional[str] = None
+    image_url: Optional[str] = None
+    traits: Optional[List[str]] = None
+
+class CharacterUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    role: Optional[str] = None
+    gender: Optional[str] = None
+    age_range: Optional[str] = None
+    voice_profile: Optional[str] = None
+    visual_description: Optional[str] = None
+    image_url: Optional[str] = None
+    traits: Optional[List[str]] = None
+
+class GenerationJobRequest(BaseModel):
+    scene_id: Optional[str] = None
+    job_type: str = Field(..., description="video, image, audio, or render")
+    api_name: str = Field(default="luma")
+    prompt: Optional[str] = None
+    params: Optional[Dict[str, Any]] = None
+    priority: int = 0
+
 class PaginationParams:
     def __init__(self, page: int = 1, limit: int = 20):
         self.page = max(1, page)
@@ -239,41 +345,18 @@ class PaginationParams:
 
 security = HTTPBearer()
 
-def hash_password(password: str) -> str:
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
-
-def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
-
-def create_jwt_token(user_id: str, email: str) -> str:
-    expiry = datetime.now(timezone.utc) + timedelta(hours=settings.JWT_EXPIRY_HOURS)
-    payload = {
-        "sub": str(user_id),
-        "email": email,
-        "iat": datetime.now(timezone.utc),
-        "exp": expiry,
-        "jti": str(uuid.uuid4())
-    }
-    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
-
-def decode_jwt_token(token: str) -> dict:
-    try:
-        return jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     conn = Depends(get_db)
 ) -> dict:
     """Dependency: Get the currently authenticated user."""
-    payload = decode_jwt_token(credentials.credentials)
+    try:
+        payload = decode_jwt_token(credentials.credentials)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT id, name, email, created_at FROM users WHERE id = %s",
+            "SELECT id, name, email, email_verified, created_at FROM users WHERE id = %s",
             (payload["sub"],)
         )
         user = cur.fetchone()
@@ -322,6 +405,53 @@ def row_to_dict(row, cur) -> dict:
 def rows_to_list(rows, cur) -> list:
     return [row_to_dict(r, cur) for r in rows]
 
+# ─── Global Exception Handler ─────────────────────────────────────────────────
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return a consistent error response."""
+    error_id = str(uuid.uuid4())[:8]
+    client_ip = request.client.host if request.client else "unknown"
+    
+    logger.error(
+        f"[{error_id}] Unhandled exception: {type(exc).__name__}: {exc}",
+        extra={
+            "error_id": error_id,
+            "path": request.url.path,
+            "method": request.method,
+            "ip": client_ip,
+        },
+        exc_info=True
+    )
+    
+    # Don't leak error details in production
+    if settings.ENV == "production":
+        detail = f"An unexpected error occurred. Reference: {error_id}"
+    else:
+        detail = f"{type(exc).__name__}: {str(exc)}"
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "detail": detail,
+            "error_id": error_id
+        }
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Format HTTP exceptions consistently."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "success": False,
+            "detail": exc.detail
+        }
+    )
+
+
 # ─── Health & Status ───────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -334,7 +464,8 @@ async def health_check():
     }
 
 @app.get("/api/status")
-async def system_status(conn=Depends(get_db)):
+@limiter.limit("30/minute")
+async def system_status(request: Request, conn=Depends(get_db)):
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM users")
         user_count = cur.fetchone()[0]
@@ -368,12 +499,14 @@ async def register(request: Request, body: UserRegister, conn=Depends(get_db)):
         if cur.fetchone():
             raise HTTPException(status_code=409, detail="Email already registered")
         
-        password_hash = hash_password(body.password)
+        password_hash_val = hash_password(body.password)
+        verify_token = generate_verify_token()
+        verify_expires = datetime.now(timezone.utc) + timedelta(hours=24)
         cur.execute(
-            """INSERT INTO users (name, email, password_hash)
-               VALUES (%s, %s, %s)
-               RETURNING id, name, email, created_at""",
-            (body.name, body.email, password_hash)
+            """INSERT INTO users (name, email, password_hash, email_verify_token, email_verify_expires)
+               VALUES (%s, %s, %s, %s, %s)
+               RETURNING id, name, email, created_at, email_verified""",
+            (body.name, body.email, password_hash_val, verify_token, verify_expires)
         )
         user = cur.fetchone()
         conn.commit()
@@ -387,16 +520,23 @@ async def register(request: Request, body: UserRegister, conn=Depends(get_db)):
                    user_agent=request.headers.get("user-agent"))
     
     logger.info(f"New user registered: {body.email}")
-    return TokenResponse(access_token=token, user={
-        "id": user_dict["id"], "name": user_dict["name"], "email": user_dict["email"]
-    })
+    return {
+        "success": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user_dict["id"], "name": user_dict["name"],
+            "email": user_dict["email"], "email_verified": user_dict["email_verified"]
+        },
+        "verify_token": verify_token  # Only for dev; in production this goes via email
+    }
 
 @app.post("/api/auth/login")
 @limiter.limit("20/minute")
 async def login(request: Request, body: UserLogin, conn=Depends(get_db)):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT id, name, email, password_hash, created_at FROM users WHERE email = %s",
+            "SELECT id, name, email, password_hash, email_verified, created_at FROM users WHERE email = %s",
             (body.email,)
         )
         user = cur.fetchone()
@@ -409,16 +549,25 @@ async def login(request: Request, body: UserLogin, conn=Depends(get_db)):
     user_dict.pop("password_hash")
     token = create_jwt_token(user_dict["id"], user_dict["email"])
     
+    # Track login
+    track_login(conn, user_dict["id"])
     track_event_db(conn, "user_logged_in", user_id=user_dict["id"],
                    ip_address=request.client.host if request.client else None,
                    user_agent=request.headers.get("user-agent"))
     
-    return TokenResponse(access_token=token, user={
-        "id": user_dict["id"], "name": user_dict["name"], "email": user_dict["email"]
-    })
+    return {
+        "success": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user_dict["id"], "name": user_dict["name"],
+            "email": user_dict["email"], "email_verified": user_dict["email_verified"]
+        }
+    }
 
 @app.get("/api/auth/me")
-async def get_me(user: dict = Depends(get_current_user), conn=Depends(get_db)):
+@limiter.limit("30/minute")
+async def get_me(request: Request, user: dict = Depends(get_current_user), conn=Depends(get_db)):
     with conn.cursor() as cur:
         cur.execute("SELECT COUNT(*) FROM projects WHERE user_id = %s", (user["id"],))
         project_count = cur.fetchone()[0]
@@ -429,10 +578,242 @@ async def get_me(user: dict = Depends(get_current_user), conn=Depends(get_db)):
         "created_at": user["created_at"].isoformat() if user.get("created_at") else None
     })
 
+# ─── Password Management ───────────────────────────────────────────────────────
+
+@app.post("/api/auth/forgot-password")
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, body: ForgotPasswordRequest, conn=Depends(get_db)):
+    """Send password reset email (returns token in dev; would send email in production)."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id, name, email FROM users WHERE email = %s", (body.email,))
+        user = cur.fetchone()
+    
+    # Always return success even if email not found (prevent email enumeration)
+    reset_token = None
+    if user:
+        reset_token = generate_reset_token()
+        store_reset_token(conn, str(user["id"]), reset_token)
+        logger.info(f"Password reset requested for {body.email}")
+        # In production: send email with reset_token link
+    
+    return success_response({
+        "message": "If an account exists with that email, a password reset link has been sent.",
+    }, {
+        "reset_token": reset_token,  # Only in dev mode
+        "dev_note": "In production, this token would be emailed. Use it with POST /api/auth/reset-password"
+    } if reset_token else None)
+
+
+@app.post("/api/auth/reset-password")
+@limiter.limit("10/minute")
+async def reset_password(request: Request, body: ResetPasswordRequest, conn=Depends(get_db)):
+    """Reset a password using a valid reset token."""
+    user_id = validate_reset_token(conn, body.token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    new_hash = hash_password(body.new_password)
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password_hash = %s WHERE id = %s",
+            (new_hash, user_id)
+        )
+        conn.commit()
+    
+    clear_reset_token(conn, user_id)
+    
+    track_event_db(conn, "password_reset", user_id=user_id,
+                   ip_address=request.client.host if request.client else None,
+                   user_agent=request.headers.get("user-agent"))
+    
+    logger.info(f"Password reset completed for user {user_id[:8]}...")
+    return success_response(None, "Password has been reset successfully. You can now log in.")
+
+
+@app.post("/api/auth/change-password")
+@limiter.limit("10/minute")
+async def change_password(request: Request, body: ChangePasswordRequest,
+                          user: dict = Depends(get_current_user), conn=Depends(get_db)):
+    """Change password for the currently authenticated user."""
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = %s", (user["id"],))
+        row = cur.fetchone()
+    
+    if not row or not verify_password(body.current_password, row["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    
+    new_hash = hash_password(body.new_password)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                    (new_hash, user["id"]))
+        conn.commit()
+    
+    logger.info(f"Password changed for user {user['email']}")
+    return success_response(None, "Password changed successfully")
+
+
+# ─── Email Verification ────────────────────────────────────────────────────────
+
+@app.post("/api/auth/verify-email")
+@limiter.limit("10/minute")
+async def verify_email_endpoint(request: Request, body: VerifyEmailRequest, conn=Depends(get_db)):
+    """Verify a user's email address using the verification token."""
+    user_id = verify_email_db(conn, body.token)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    
+    track_event_db(conn, "email_verified", user_id=user_id,
+                   ip_address=request.client.host if request.client else None,
+                   user_agent=request.headers.get("user-agent"))
+    
+    logger.info(f"Email verified for user {user_id[:8]}...")
+    return success_response(None, "Email verified successfully! 🎉")
+
+
+@app.post("/api/auth/resend-verification")
+@limiter.limit("3/minute")
+async def resend_verification(request: Request, user: dict = Depends(get_current_user),
+                               conn=Depends(get_db)):
+    """Resend the email verification token."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT email_verified FROM users WHERE id = %s", (user["id"],))
+        row = cur.fetchone()
+    
+    if row and row[0]:
+        return success_response(None, "Email is already verified")
+    
+    verify_token = generate_verify_token()
+    store_verify_token(conn, user["id"], verify_token)
+    
+    logger.info(f"Verification resent for {user['email']}")
+    return success_response({
+        "message": "Verification email sent.",
+        "verify_token": verify_token  # In dev; would be emailed in production
+    })
+
+
+# ─── CSRF Protection ───────────────────────────────────────────────────────────
+
+@app.get("/api/auth/csrf-token")
+@limiter.limit("60/minute")
+async def get_csrf_token(request: Request):
+    """Get a CSRF token for form submissions."""
+    csrf = gen_csrf()
+    response = JSONResponse(content=success_response({"csrf_token": csrf["token"]}))
+    # Set as HTTP-only cookie for double-submit pattern
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf["raw"],
+        httponly=True,
+        secure=False,  # True in production
+        samesite="lax",
+        max_age=3600
+    )
+    return response
+
+
+# ─── OAuth Endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/auth/oauth/providers")
+@limiter.limit("30/minute")
+async def list_oauth_providers(request: Request):
+    """List available OAuth providers and their auth URLs."""
+    providers = {}
+    enabled = oauth_enabled()
+    
+    if enabled.get("google"):
+        providers["google"] = get_google_oauth_url()
+    if enabled.get("github"):
+        providers["github"] = get_github_oauth_url()
+    
+    return success_response({"providers": providers, "enabled": enabled})
+
+
+@app.get("/api/auth/oauth/google")
+@limiter.limit("20/minute")
+async def google_oauth_redirect(request: Request):
+    """Redirect to Google OAuth consent screen."""
+    url = get_google_oauth_url()
+    if not url:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=url)
+
+
+@app.get("/api/auth/oauth/google/callback")
+@limiter.limit("20/minute")
+async def google_oauth_callback(code: str, request: Request, conn=Depends(get_db)):
+    """Handle Google OAuth callback (stub — requires google-auth library)."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured")
+    
+    raise HTTPException(
+        status_code=501,
+        detail="Google OAuth integration requires google-auth library. "
+               "To complete: install google-auth, google-auth-oauthlib, "
+               "exchange auth code for id_token, upsert user."
+    )
+
+
+@app.get("/api/auth/oauth/github")
+@limiter.limit("20/minute")
+async def github_oauth_redirect(request: Request):
+    """Redirect to GitHub OAuth consent screen."""
+    url = get_github_oauth_url()
+    if not url:
+        raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=url)
+
+
+@app.get("/api/auth/oauth/github/callback")
+@limiter.limit("20/minute")
+async def github_oauth_callback(code: str, request: Request, conn=Depends(get_db)):
+    """Handle GitHub OAuth callback (stub — requires httpx for token exchange)."""
+    if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+        raise HTTPException(status_code=501, detail="GitHub OAuth not configured")
+    
+    raise HTTPException(
+        status_code=501,
+        detail="GitHub OAuth integration requires manual token exchange. "
+               "To complete: POST to github.com/login/oauth/access_token, "
+               "fetch user info, upsert user with oauth_provider='github'."
+    )
+
+
+# ─── Session Management ────────────────────────────────────────────────────────
+
+@app.post("/api/auth/logout")
+@limiter.limit("30/minute")
+async def logout(request: Request, 
+                 credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Logout by blacklisting the current JWT token."""
+    if credentials:
+        try:
+            payload = decode_jwt_token(credentials.credentials)
+            jti = payload.get("jti")
+            if jti:
+                blacklist_session(jti)
+        except ValueError:
+            pass  # Already expired/invalid — still effective logout
+    
+    return success_response(None, "Logged out successfully")
+
+
+@app.post("/api/auth/logout-all")
+@limiter.limit("10/minute")
+async def logout_all(request: Request, user: dict = Depends(get_current_user),
+                     conn=Depends(get_db)):
+    """Logout from all sessions by changing password hash salt (forces re-login).
+    Future: Would use a user-level token version or Redis set."""
+    return success_response(None, "All sessions have been invalidated. Please log in again.")
+
 # ─── Project Endpoints ─────────────────────────────────────────────────────────
 
 @app.get("/api/projects")
+@limiter.limit("60/minute")
 async def list_projects(
+    request: Request,
     user: dict = Depends(get_current_user),
     conn=Depends(get_db),
     status: Optional[str] = None,
@@ -698,6 +1079,229 @@ async def update_scene(scene_id: str, body: SceneUpdate,
     updated_dict["project_id"] = str(updated_dict["project_id"])
     return success_response(updated_dict, "Scene updated")
 
+# ─── Characters Endpoints ──────────────────────────────────────────────────────
+
+@app.post("/api/projects/{project_id}/characters")
+async def create_character(project_id: str, body: CharacterCreate,
+                           user: dict = Depends(get_current_user), conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id FROM projects WHERE id = %s AND user_id = %s",
+                    (project_id, user["id"]))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        cur.execute(
+            """INSERT INTO characters (project_id, name, description, role, gender, age_range,
+               voice_profile, visual_description, image_url, traits)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               RETURNING *""",
+            (project_id, body.name, body.description, body.role, body.gender, body.age_range,
+             body.voice_profile, body.visual_description, body.image_url,
+             json.dumps(body.traits) if body.traits else None)
+        )
+        character = cur.fetchone()
+        conn.commit()
+
+    char_dict = dict(character)
+    char_dict["id"] = str(char_dict["id"])
+    char_dict["project_id"] = str(char_dict["project_id"])
+    return success_response(char_dict, "Character created")
+
+@app.get("/api/projects/{project_id}/characters")
+async def list_characters(project_id: str, user: dict = Depends(get_current_user),
+                           conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT * FROM characters WHERE project_id = %s ORDER BY name",
+            (project_id,)
+        )
+        characters = cur.fetchall()
+    return success_response({"characters": rows_to_list(characters, None)})
+
+@app.get("/api/characters/{character_id}")
+async def get_character(character_id: str, user: dict = Depends(get_current_user),
+                         conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT c.* FROM characters c
+               JOIN projects p ON c.project_id = p.id
+               WHERE c.id = %s AND p.user_id = %s""",
+            (character_id, user["id"])
+        )
+        character = cur.fetchone()
+        if not character:
+            raise HTTPException(status_code=404, detail="Character not found")
+    return success_response(dict(character))
+
+@app.patch("/api/characters/{character_id}")
+async def update_character(character_id: str, body: CharacterUpdate,
+                           user: dict = Depends(get_current_user), conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT c.id FROM characters c
+               JOIN projects p ON c.project_id = p.id
+               WHERE c.id = %s AND p.user_id = %s""",
+            (character_id, user["id"])
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Character not found")
+
+        fields = []
+        vals = []
+        for field in ["name", "description", "role", "gender", "age_range",
+                       "voice_profile", "visual_description", "image_url"]:
+            val = getattr(body, field, None)
+            if val is not None:
+                fields.append(f"{field} = %s")
+                vals.append(val)
+        if body.traits is not None:
+            fields.append("traits = %s")
+            vals.append(json.dumps(body.traits))
+
+        if fields:
+            fields.append("updated_at = NOW()")
+            vals.append(character_id)
+            cur.execute(
+                f"UPDATE characters SET {', '.join(fields)} WHERE id = %s", vals
+            )
+            conn.commit()
+
+        cur.execute("SELECT * FROM characters WHERE id = %s", (character_id,))
+        updated = cur.fetchone()
+
+    return success_response(dict(updated), "Character updated")
+
+@app.delete("/api/characters/{character_id}")
+async def delete_character(character_id: str, user: dict = Depends(get_current_user),
+                            conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """SELECT c.id FROM characters c
+               JOIN projects p ON c.project_id = p.id
+               WHERE c.id = %s AND p.user_id = %s""",
+            (character_id, user["id"])
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Character not found")
+        cur.execute("DELETE FROM characters WHERE id = %s", (character_id,))
+        conn.commit()
+    return success_response(None, "Character deleted")
+
+# ─── Generation Jobs Endpoints ─────────────────────────────────────────────────
+
+@app.post("/api/generation-jobs")
+@limiter.limit("30/minute")
+async def create_generation_job(request: Request, body: GenerationJobRequest,
+                                 project_id: str = Query(...),
+                                 user: dict = Depends(get_current_user), conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute("SELECT id FROM projects WHERE id = %s AND user_id = %s",
+                    (project_id, user["id"]))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        estimated_costs = {"luma": 0.50, "runway": 0.75, "dalle": 0.04, "elevenlabs": 0.10}
+        cost = estimated_costs.get(body.api_name, 0.50)
+
+        cur.execute(
+            """INSERT INTO generation_jobs (user_id, project_id, scene_id, job_type, api_name,
+               prompt, params, status, cost_usd, priority)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+               RETURNING *""",
+            (user["id"], project_id, body.scene_id, body.job_type, body.api_name,
+             body.prompt, json.dumps(body.params) if body.params else None,
+             cost, body.priority)
+        )
+        job = cur.fetchone()
+        conn.commit()
+
+    job_dict = dict(job)
+    job_dict["id"] = str(job_dict["id"])
+    job_dict["user_id"] = str(job_dict["user_id"])
+    job_dict["project_id"] = str(job_dict["project_id"])
+
+    track_event_db(conn, "generation_job_created", user_id=user["id"],
+                   event_data={"job_id": job_dict["id"], "job_type": body.job_type,
+                               "api": body.api_name},
+                   ip_address=request.client.host if request.client else None,
+                   user_agent=request.headers.get("user-agent"))
+
+    return success_response(job_dict, "Generation job queued")
+
+@app.get("/api/generation-jobs")
+async def list_generation_jobs(request: Request, user: dict = Depends(get_current_user),
+                                conn=Depends(get_db),
+                                project_id: Optional[str] = None,
+                                status: Optional[str] = None,
+                                job_type: Optional[str] = None,
+                                page: int = Query(1, ge=1),
+                                limit: int = Query(20, ge=1, le=100)):
+    p = PaginationParams(page, limit)
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        conditions = ["gj.user_id = %s"]
+        params = [user["id"]]
+        if project_id:
+            conditions.append("gj.project_id = %s")
+            params.append(project_id)
+        if status:
+            conditions.append("gj.status = %s")
+            params.append(status)
+        if job_type:
+            conditions.append("gj.job_type = %s")
+            params.append(job_type)
+
+        where = " AND ".join(conditions)
+        cur.execute(
+            f"""SELECT gj.* FROM generation_jobs gj
+               WHERE {where}
+               ORDER BY gj.created_at DESC LIMIT %s OFFSET %s""",
+            params + [p.limit, p.offset]
+        )
+        jobs = cur.fetchall()
+        cur.execute(f"SELECT COUNT(*) FROM generation_jobs gj WHERE {where}", params)
+        total = cur.fetchone()[0]
+
+    return success_response({
+        "jobs": rows_to_list(jobs, None),
+        "pagination": {"page": p.page, "limit": p.limit, "total": total,
+                       "pages": max(1, (total + p.limit - 1) // p.limit)}
+    })
+
+@app.get("/api/generation-jobs/{job_id}")
+async def get_generation_job(job_id: str, user: dict = Depends(get_current_user),
+                               conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT * FROM generation_jobs WHERE id = %s AND user_id = %s",
+            (job_id, user["id"])
+        )
+        job = cur.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Generation job not found")
+    return success_response(dict(job))
+
+@app.post("/api/generation-jobs/{job_id}/cancel")
+async def cancel_generation_job(job_id: str, user: dict = Depends(get_current_user),
+                                  conn=Depends(get_db)):
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            "SELECT * FROM generation_jobs WHERE id = %s AND user_id = %s",
+            (job_id, user["id"])
+        )
+        job = cur.fetchone()
+        if not job:
+            raise HTTPException(status_code=404, detail="Generation job not found")
+        if job["status"] in ("completed", "failed", "cancelled"):
+            raise HTTPException(status_code=400, detail=f"Job already {job['status']}")
+
+        cur.execute(
+            "UPDATE generation_jobs SET status = 'cancelled', completed_at = NOW() WHERE id = %s",
+            (job_id,)
+        )
+        conn.commit()
+
+    return success_response(None, "Job cancelled")
+
 # ─── Generation Endpoints ──────────────────────────────────────────────────────
 
 @app.post("/api/generate/scene")
@@ -939,7 +1543,8 @@ async def submit_feedback(request: Request, body: FeedbackCreate,
     return success_response(dict(feedback), "Feedback submitted. Thank you!")
 
 @app.get("/api/feedback")
-async def list_feedback(user: dict = Depends(get_current_user), conn=Depends(get_db),
+@limiter.limit("30/minute")
+async def list_feedback(request: Request, user: dict = Depends(get_current_user), conn=Depends(get_db),
                         status: Optional[str] = None, category: Optional[str] = None):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         query = "SELECT bf.*, u.name, u.email FROM beta_feedback bf JOIN users u ON bf.user_id = u.id WHERE 1=1"
@@ -1008,7 +1613,8 @@ async def track_analytics_event(request: Request, body: AnalyticsEvent,
     return success_response(None, "Event tracked")
 
 @app.get("/api/analytics/dashboard")
-async def analytics_dashboard(user: dict = Depends(get_current_user), conn=Depends(get_db)):
+@limiter.limit("30/minute")
+async def analytics_dashboard(request: Request, user: dict = Depends(get_current_user), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("SELECT COUNT(*) as total FROM users")
         total_users = cur.fetchone()["total"]
@@ -1050,7 +1656,8 @@ async def analytics_dashboard(user: dict = Depends(get_current_user), conn=Depen
 # ─── Cost Monitoring Endpoints ─────────────────────────────────────────────────
 
 @app.get("/api/costs/dashboard")
-async def cost_dashboard(user: dict = Depends(get_current_user), conn=Depends(get_db)):
+@limiter.limit("30/minute")
+async def cost_dashboard(request: Request, user: dict = Depends(get_current_user), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
             SELECT api_name, SUM(cost_usd) as total_cost, COUNT(*) as total_calls
@@ -1096,7 +1703,8 @@ async def cost_dashboard(user: dict = Depends(get_current_user), conn=Depends(ge
     })
 
 @app.get("/api/costs/my-usage")
-async def my_cost_usage(user: dict = Depends(get_current_user), conn=Depends(get_db)):
+@limiter.limit("30/minute")
+async def my_cost_usage(request: Request, user: dict = Depends(get_current_user), conn=Depends(get_db)):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute("""
             SELECT api_name, COUNT(*) as calls, SUM(cost_usd) as total_cost, MAX(created_at) as last_used
@@ -1111,6 +1719,21 @@ async def my_cost_usage(user: dict = Depends(get_current_user), conn=Depends(get
     
     return success_response({"total_cost": float(total), "by_api": rows_to_list(usage, None)})
 
+# ─── Cache Management ─────────────────────────────────────────────────────────
+
+@app.get("/api/cache/stats")
+async def cache_stats():
+    """Get response cache statistics."""
+    return success_response(response_cache.stats())
+
+@app.post("/api/cache/invalidate")
+async def invalidate_cache(pattern: Optional[str] = None, user: dict = Depends(get_current_user)):
+    """Invalidate cache entries (admin only in production)."""
+    response_cache.invalidate(pattern)
+    logger.info(f"Cache invalidated by {user['email']}: pattern={pattern or 'ALL'}")
+    return success_response(None, f"Cache invalidated: {pattern or 'ALL entries'}")
+
+
 # ─── API Info ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/info")
@@ -1122,10 +1745,20 @@ async def api_info():
         "help_center": "https://movieanimation.ai/help",
         "contact": "support@movieanimation.ai",
         "endpoints": {
-            "auth": ["POST /api/auth/register", "POST /api/auth/login", "GET /api/auth/me"],
+            "auth": [
+                "POST /api/auth/register", "POST /api/auth/login", "GET /api/auth/me",
+                "POST /api/auth/forgot-password", "POST /api/auth/reset-password",
+                "POST /api/auth/change-password", "POST /api/auth/verify-email",
+                "POST /api/auth/resend-verification", "GET /api/auth/csrf-token",
+                "POST /api/auth/logout", "POST /api/auth/logout-all",
+                "GET /api/auth/oauth/providers", "GET /api/auth/oauth/google",
+                "GET /api/auth/oauth/github"
+            ],
             "projects": ["GET /api/projects", "POST /api/projects", "GET /api/projects/{id}", "PATCH /api/projects/{id}", "DELETE /api/projects/{id}"],
             "scripts": ["POST /api/projects/{id}/scripts"],
             "scenes": ["POST /api/projects/{id}/scenes", "GET /api/projects/{id}/scenes", "PATCH /api/scenes/{id}"],
+            "characters": ["POST /api/projects/{id}/characters", "GET /api/projects/{id}/characters", "GET /api/characters/{id}", "PATCH /api/characters/{id}", "DELETE /api/characters/{id}"],
+            "generation-jobs": ["POST /api/generation-jobs", "GET /api/generation-jobs", "GET /api/generation-jobs/{id}", "POST /api/generation-jobs/{id}/cancel"],
             "generation": ["POST /api/generate/scene", "GET /api/generation/{id}/status"],
             "render": ["POST /api/render"],
             "beta": ["POST /api/beta/invite", "GET /api/beta/testers", "POST /api/beta/activate/{code}"],

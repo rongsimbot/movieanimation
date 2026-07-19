@@ -9,3 +9,6 @@ slowapi>=0.1.9
 httpx>=0.28
 python-dotenv
 requests
+
+# Load testing
+locust>=2.31
